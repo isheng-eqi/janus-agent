@@ -1,0 +1,38 @@
+# =============================================================================
+# Janus Framework — Phase 4 Configuration (Multi-Turn Agent with Planner)
+# Gatekeeper Tree: Gatekeeper → Planner → Workers + Reviewer
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# model: defines the LLM provider and model used by Gatekeeper, Planner, and Workers.
+# Support for heterogeneous models — each component can use a different model.
+# api_key reads from the DEEPSEEK_API_KEY environment variable at runtime.
+# ---------------------------------------------------------------------------
+model:
+  provider: "deepseek"
+  model: "deepseek-v4-pro"
+  api_key: "REDACTED"   # resolved from environment variable
+
+# ---------------------------------------------------------------------------
+# gatekeeper: strategic decision layer. Formulates Directives for the Planner.
+# Uses no tools — Gatekeeper is pure reasoning/decision-making.
+# Tactical decomposition is handled by Planner.
+gatekeeper:
+  model: "deepseek-v4-pro"   # reasoning model for strategy + directive formulation
+
+# ---------------------------------------------------------------------------
+# worker: executes subtasks dispatched by the Planner.
+# max_tool_calls caps runaway workers; model can be different from gatekeeper/planner.
+# ---------------------------------------------------------------------------
+worker:
+  model: "deepseek-v4-flash"     # faster model for task execution
+  max_tool_calls: 50         # hard stop after 50 tool invocations per worker
+
+# ---------------------------------------------------------------------------
+# janus: framework-level guardrails for the decomposition tree.
+# ---------------------------------------------------------------------------
+janus:
+  max_depth: 3                # hard depth limit for decomposition tree
+  # Planned for future phases:
+  # timeout_per_task: 300     # seconds before a worker is considered dead
+  # max_concurrent_workers: 3 # max workers running in parallel

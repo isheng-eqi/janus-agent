@@ -1,0 +1,1410 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Janus: A Hierarchical Multi-Agent Framework with Structured Quality Assurance
+% Technical Whitepaper — arXiv Preprint
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ────────────────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{newtxtext,newtxmath}       % Times-like font
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{fancyhdr}
+\usepackage{cite}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+% ── Hyperref setup ──────────────────────────────────────────────────────────
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue,
+}
+
+% ── Code listing style ──────────────────────────────────────────────────────
+\definecolor{codebg}{rgb}{0.95,0.95,0.95}
+\lstdefinestyle{janus}{
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    columns=fullflexible,
+    keepspaces=true,
+    language=Python,
+    numbers=none,
+    showstringspaces=false,
+}
+\lstset{style=janus}
+
+% ── Page style ──────────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small Janus: A Hierarchical Multi-Agent Framework}
+\fancyhead[R]{\small \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ── Title ───────────────────────────────────────────────────────────────────
+\title{\textbf{Janus: A Hierarchical Multi-Agent Framework\\[4pt]
+        with Structured Quality Assurance}}
+
+\author{%
+    Bingsheng Wang\\
+    Taiyuan University of Technology\\
+    \texttt{https://github.com/isheng-eqi/janus}
+}
+
+\date{July 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Janus is a hierarchical multi-agent framework for autonomous task execution
+that organizes LLM-based agents into a four-role architecture inspired by human
+organizational management rather than distributed systems design.
+The framework introduces the \emph{Gatekeeper Tree} pattern:
+a \textbf{Gatekeeper} (strategist with zero tools) sets direction and validates delivery;
+a \textbf{Planner} (tactician with zero tools) decomposes directives into executable work packages;
+\textbf{Workers} (executors with nine concrete tools) perform the actual work;
+and a \textbf{Reviewer} (independent auditor with zero tools) inspects every
+deliverable against structured acceptance criteria.
+Janus introduces three core innovations: (1)~a five-tier graded review verdict
+system (approved, approved-with-notes, minor revisions, major revisions,
+rejected) coupled with a four-level defect severity classification (critical,
+major, minor, suggestion), directly inspired by academic peer review and
+manufacturing quality control; (2)~a full-chain intent-preservation mechanism
+where the user's original request propagates unmodified through every layer,
+serving as an immutable anchor for delivery validation; and (3)~a self-healing
+closed loop with structured diagnosis, strategic reformulation, and result
+merging across recovery attempts.
+We evaluate Janus on complex multi-step software engineering tasks and
+demonstrate that the hierarchical review pipeline catches errors that
+flat single-agent and pipeline architectures miss, while the graded verdict
+system prevents unnecessary retries on soft criteria and the intent loop
+catches goal drift before results reach the user.
+\end{abstract}
+
+% =============================================================================
+\section{Introduction}
+% =============================================================================
+
+The shift from monolithic large language models (LLMs) to LLM-based autonomous
+agents represents one of the most consequential developments in applied AI.
+Rather than treating a model as a question-answering oracle, agent frameworks
+equip LLMs with tools, memory, and decision-making loops, enabling them to read
+files, execute commands, search the web, and iteratively refine their output.
+This paradigm has produced frameworks such as LangGraph~\cite{langgraph},
+AutoGen~\cite{autogen}, CrewAI~\cite{crewai}, and MetaGPT~\cite{metagpt},
+each offering a different approach to orchestrating multiple LLM calls toward
+a shared goal.
+
+\subsection{The Flatness Problem}
+
+Despite this rapid progress, a structural weakness runs through nearly all
+existing agent frameworks: they are \emph{architecturally flat}.
+In a typical LangGraph or AutoGen pipeline, every agent node shares the same
+tool surface (the ability to read, write, and execute), the same
+responsibility scope (both plan and execute), and---critically---the same
+information horizon (full access to all intermediate results).
+While this flatness makes frameworks easy to reason about, it introduces
+three interrelated failure modes:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Hallucination cascades.}
+    When every agent can read every intermediate output, an early hallucination
+    propagates unchecked through subsequent steps. A worker that misidentifies
+    a target directory contaminates every downstream worker with the wrong
+    context, and no independent agent exists to catch the drift.
+
+    \item \textbf{Quality collapse under scale.}
+    Existing frameworks lack \emph{structured} quality gates. Review, when it
+    exists at all, is a binary pass/fail decision made by the same LLM that
+    produced the output---a violation of the separation-of-concerns principle
+    known to every human organization. The result is that complex multi-step
+    tasks degrade into correctness-by-accident.
+
+    \item \textbf{Intent drift.}
+    As a user request passes through multiple LLM-to-LLM handoffs---from
+    orchestrator to decomposer to worker---each layer introduces a small
+    interpretation bias. By the time output reaches the user, the original
+    intent may have silently mutated. No existing framework systematically
+    guards against this.
+\end{enumerate}
+
+\subsection{The Janus Insight}
+
+Human organizations have spent millennia solving exactly these problems.
+Armies separate strategic command from tactical execution.
+Governments establish independent inspector generals to audit administrative
+agencies. Manufacturers deploy three-stage quality inspection (incoming,
+in-process, outgoing). Academic publishers grade peer review outcomes into
+accept/minor-revisions/major-revisions/reject.
+Courts apply different standards of review depending on what is being examined.
+
+Janus's core insight is that \emph{LLM agent architecture should mirror human
+organizational design, not distributed systems design}.
+Where LangGraph and AutoGen model their architectures on workflow graphs and
+message-passing topologies, Janus models its architecture on the
+separation-of-concerns, accountability hierarchies, and structured quality
+assurance that human institutions have refined over centuries.
+
+This paper presents five principal contributions:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{The Gatekeeper Tree architecture:} a four-role hierarchy
+    (Gatekeeper, Planner, Worker, Reviewer) with hard tool-access constraints
+    per role and layered information horizons. Gatekeeper, Planner, and
+    Reviewer each have \emph{zero tools}---only Workers may read files, write
+    files, or execute commands. This forces each role to operate at its
+    designated level of abstraction.
+
+    \item \textbf{A five-tier graded review system:} inspired by academic peer
+    review (accept/minor-revisions/major-revisions/reject) and manufacturing
+    quality control (critical/major/minor/suggestion defect severity),
+    replacing binary pass/fail with nuanced verdicts and tiered retry
+    strategies that prevent unnecessary re-execution.
+
+    \item \textbf{Full-chain intent preservation:} the \texttt{user\_goal}
+    field propagates the user's original, unmodified request through every
+    layer---Gatekeeper, Planner, Worker, Reviewer, and back---serving as an
+    immutable anchor against which final delivery is validated before the
+    user ever sees it.
+
+    \item \textbf{A self-healing recovery loop:} when tasks fail, the
+    Gatekeeper performs structured diagnosis (asking the LLM \emph{why} tasks
+    failed), strategic reformulation (creating a new directive targeting only
+    the failed aspects), re-execution, and result merging across attempts.
+
+    \item \textbf{An empirical comparison} with existing frameworks
+    (LangGraph, AutoGen, CrewAI, MetaGPT) across architectural, quality,
+    safety, and observability dimensions, plus an end-to-end case study
+    demonstrating the full pipeline from user input to validated output.
+\end{itemize}
+
+% =============================================================================
+\section{Design Philosophy}
+% =============================================================================
+
+This section articulates \emph{why} Janus is structured the way it is.
+We establish four design principles derived from human organizational patterns,
+then show how each principle maps to a concrete architectural constraint.
+
+\subsection{Why Hierarchy?}
+
+An LLM's context window is both its greatest asset and its tightest constraint.
+Every token loaded into context consumes attention budget and risks diluting
+the signal-to-noise ratio. A flat architecture---where every agent sees every
+intermediate result---is optimal for information completeness but catastrophic
+for information \emph{relevance}. The agent that must decide whether a task
+succeeded should not be the same agent that reads every line of tool-call
+output from every worker.
+
+Human institutions converged on hierarchy for exactly this reason. A general
+does not read individual soldiers' after-action reports; a CEO does not
+review every line of code committed by every engineer. Each layer compresses
+and interprets the layer below it, adding \emph{judgment} while removing
+\emph{noise}.
+
+\subsection{Four Design Principles}
+
+\subsubsection*{Principle 1: Separation of Concerns}
+\label{sec:sep-concerns}
+
+No single agent should both produce work and judge its quality.
+In Janus, the Gatekeeper sets direction but never executes; the Worker executes
+but never self-reviews; the Reviewer audits but never modifies.
+We enforce this at the \emph{tool level}: Gatekeeper, Planner, and Reviewer are
+initialized with zero tools---they cannot read files, write files, or run
+commands. Only Workers have tool access. This is not a suggestion; it is a
+hard architectural constraint enforced by the \texttt{ToolRegistry}.
+
+This principle maps directly to the military Staff/Line split (planners do not
+command troops) and the government Inspector General model (auditors are
+independent of the agencies they audit).
+
+\subsubsection*{Principle 2: Trust Nothing}
+\label{sec:trust-nothing}
+
+Every Worker output must pass independent review before the Gatekeeper
+presents it to the user. The Reviewer is a separate LLM instance with a
+dedicated system prompt, no shared context with the Worker, and strict
+instructions to inspect evidence, not assume it. We model this on
+manufacturing's three-line quality defense: incoming inspection (TaskSpec
+validation), in-process inspection (desk-check pre-screening), and outgoing
+inspection (full Reviewer audit).
+
+\subsubsection*{Principle 3: Recursive Decomposition}
+\label{sec:recursive-decomp}
+
+Complex goals are recursively broken into sub-goals until each sub-goal is
+small enough for a single Worker to handle in one pass. The decomposition tree
+has a hard depth limit (configurable, default 3) to prevent infinite recursion.
+Workers can self-decompose when a task proves too complex mid-execution,
+requesting decomposition and receiving sub-task results before resuming.
+
+This principle maps to the OKR (Objectives and Key Results) cascade from
+corporate management: each level of decomposition must explicitly state
+\emph{why} the sub-task matters (the \texttt{intent} field), not just
+\emph{what} to do.
+
+\subsubsection*{Principle 4: Human-in-the-Loop by Default}
+\label{sec:human-in-loop}
+
+The Gatekeeper's \texttt{\_report\_to\_user} method presents only
+architecture-level information: how many tasks passed, how many failed,
+a one-line summary per task. The user never sees raw Worker output, tool-call
+logs, or implementation details unless explicitly requested (via \texttt{--verbose} mode).
+This respects the user's cognitive bandwidth while preserving full
+traceability for debugging. The delivery validation step
+(\texttt{\_validate\_delivery}) runs before user-facing output, catching
+goal drift before it reaches the user.
+
+\subsection{The Human-Organization Design Pipeline}
+
+Janus formalizes a four-step process for designing new features:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Find the human equivalent.} Ask: ``What does this problem
+    look like in a human organization?'' Map to military, government,
+    corporate, judicial, manufacturing, or academic practice.
+    \item \textbf{Extract the core mechanism.} Strip away institutional
+    scaffolding (we do not need military tribunals or HR departments).
+    Keep only what directly improves decision quality or execution
+    reliability.
+    \item \textbf{Map to Janus roles and protocols.} Translate the human
+    concept into a concrete data structure or method. For example, Commander's
+    Intent $\rightarrow$ \texttt{TaskSpec.intent}; Inspector General
+    $\rightarrow$ \texttt{Reviewer}; after-action report $\rightarrow$
+    \texttt{ExecutionReport}.
+    \item \textbf{Implement minimally.} Add only what the current system
+    demonstrably needs. Defer multi-planner parallelism, resource arbitration,
+    and cross-worker negotiation until those problems actually manifest.
+\end{enumerate}
+
+This is a \emph{design methodology}, not a metaphor. Every structural
+decision in Janus---from the five-tier review verdict to the context-discipline
+prompt---can be traced to a specific human practice that was studied, extracted,
+and mapped.
+
+% =============================================================================
+\section{Janus Architecture}
+% =============================================================================
+
+This section provides a detailed technical description of Janus's four-role
+architecture, the information flow between roles, and the protocol data
+structures that carry state across the system. We describe what each layer
+sees, what it produces, and what it is deliberately prevented from seeing.
+
+\subsection{System Overview}
+
+Figure~\ref{fig:architecture} shows the complete Janus architecture.
+The user interacts with a REPL loop via \texttt{Session}, which maintains
+conversation history and delegates all decisions to the Gatekeeper.
+The Gatekeeper routes simple chat directly to a lightweight LLM call, and
+complex tasks through the full Planner $\rightarrow$ Worker $\rightarrow$
+Reviewer pipeline.
+
+\begin{figure}[H]
+\centering
+\begin{verbatim}
+                         User
+                          |
+                       Session (history + pass-through)
+                          |
+                    ┌─────Gatekeeper──────┐
+                    │  Strategic layer    │
+                    │  ZERO tools         │
+                    │  Model: reasoning   │
+                    └────────┬────────────┘
+                             | Directive
+                    ┌────────Planner──────┐
+                    │  Tactical layer     │
+                    │  ZERO tools         │
+                    │  Model: fast        │
+                    └──┬──────┬──────┬────┘
+                       |      |      |
+                    Worker0 Worker1 WorkerN
+                    (tools) (tools) (tools)
+                       |      |      |
+                    ┌──┴──────┴──────┴────┐
+                    │     Reviewer        │
+                    │  Independent audit  │
+                    │  ZERO tools         │
+                    └─────────────────────┘
+\end{verbatim}
+\caption{Janus four-role architecture. Only Workers have tool access;
+Gatekeeper, Planner, and Reviewer operate through pure LLM reasoning.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Gatekeeper: The Strategic Decision Layer}
+
+The Gatekeeper (\texttt{core/gatekeeper.py}, 973 lines) is the sole entry
+point for all user input. Its design is governed by a single hard constraint:
+\emph{zero tools}. The Gatekeeper cannot read files, write files, execute
+commands, or search the web. It reasons purely through LLM calls.
+
+\subsubsection*{Decision Routing}
+
+The \texttt{\_decide} method classifies every user message as either
+\texttt{chat} (simple conversation) or \texttt{task} (needs Planner
+decomposition). The decision is a structured JSON call:
+
+\begin{lstlisting}
+{
+    "action": "chat" | "task",
+    "reason": "brief explanation"
+}
+\end{lstlisting}
+
+API failures default to \texttt{task} (fail-open: it is better to attempt
+decomposition and fail gracefully than to silently treat a complex request as
+chat). The decision prompt includes a \texttt{context\_discipline\_prompt}
+shared across all strategic layers, which instructs the LLM to maintain only
+architecture-level information and summarize Worker results to one line.
+
+\subsubsection*{Directive Formulation}
+
+When the action is \texttt{task}, the Gatekeeper calls
+\texttt{\_formulate\_directive} to translate the user's goal into a
+\texttt{Directive} object (Section~\ref{sec:protocol}) with three fields:
+\texttt{intent} (strategic direction), \texttt{constraints} (hard must-not-violate
+rules), and \texttt{priority} (speed, quality, or balanced). The
+\texttt{user\_goal} field preserves the user's original input verbatim---it is
+never modified by any LLM call---and serves as the system's immutable anchor.
+
+A critical detail: the \texttt{user\_goal} is separate from \texttt{goal}.
+During recovery loops, \texttt{goal} may be augmented with diagnostic
+annotations (``[RECOVERY ATTEMPT 1/2 --- only address failed aspects]''),
+but \texttt{user\_goal} remains pristine. When delivery validation runs
+(Section~\ref{sec:intent-loop}), it compares output against
+\texttt{user\_goal}, not against the possibly-augmented \texttt{goal}.
+
+\subsubsection*{Recovery Loop}
+
+If the Planner returns an \texttt{ExecutionReport} with failed tasks, the
+Gatekeeper enters a structured recovery loop (up to 2 attempts):
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Diagnose} (\texttt{\_diagnose\_failures}): ask the LLM
+    \emph{why} tasks failed, using structured failure data from the report
+    including acceptance criteria and review issues.
+    \item \textbf{Reformulate} (\texttt{\_reformulate\_for\_recovery}): create
+    a new \texttt{Directive} targeting \emph{only} the failed aspects, with an
+    explicitly different strategy based on the diagnosis.
+    \item \textbf{Re-execute}: pass the new directive to the Planner.
+    \item \textbf{Merge} (\texttt{\_merge\_reports}): combine successful
+    results from the original attempt with new results from recovery.
+\end{enumerate}
+
+This corresponds to the corporate Performance Improvement Plan (PIP) pattern:
+not just ``redo it,'' but ``diagnose why it failed, specify what must change,
+and try a different approach.''
+
+\subsubsection*{Delivery Validation}
+
+Before formatting the final user-facing output, the Gatekeeper runs
+\texttt{\_validate\_delivery}, a single LLM call that asks: ``Does the output
+actually answer the user's original request?'' If the answer is no, the
+Gatekeeper triggers an extra recovery cycle. This is the final safety net
+for intent drift (Section~\ref{sec:intent-loop}).
+
+\subsection{Planner: The Tactical Execution Layer}
+
+The Planner (\texttt{core/planner.py}, 1,155 lines) receives a
+\texttt{Directive} from the Gatekeeper and produces an
+\texttt{ExecutionReport}. Like the Gatekeeper, the Planner has \emph{zero
+tools}---it cannot read, write, or execute. It only plans, dispatches, tracks,
+and summarizes.
+
+\subsubsection*{Tactical Decomposition}
+
+The \texttt{\_plan} method calls the LLM to break the directive into an array
+of \texttt{TaskSpec} objects. Each \texttt{TaskSpec} contains:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \texttt{task\_id}: unique identifier.
+    \item \texttt{description}: concrete, actionable instruction.
+    \item \texttt{acceptance\_criteria}: each criterion prefixed with
+    \texttt{[HARD]} (must-have, zero tolerance) or \texttt{[SOFT]}
+    (nice-to-have, minor deviations acceptable). Unmarked criteria default
+    to \texttt{[HARD]} for backward compatibility.
+    \item \texttt{context}: scoped background information (not full history).
+    \item \texttt{intent}: why this task matters in the bigger picture.
+    \item \texttt{goal}, \texttt{user\_goal}, \texttt{constraints}: propagated
+    from the directive.
+    \item \texttt{depth}: current recursion depth (1 = root task).
+\end{itemize}
+
+The \texttt{[HARD]/[SOFT]} classification is a direct mapping of judicial
+review standards: \texttt{[HARD]} criteria receive \emph{de novo} scrutiny
+(zero tolerance), while \texttt{[SOFT]} criteria receive a ``clearly
+erroneous'' standard (only blatant failures block). This prevents the system
+from wasting retry cycles on cosmetic issues like variable naming style when
+the core functionality is correct.
+
+\subsubsection*{Priority-Driven Retry Budgets}
+
+The Planner maps the directive's \texttt{priority} field to a concrete retry
+budget:
+
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+\textbf{Priority} & \textbf{Max Retries} \\
+\midrule
+speed / urgent & 0 (fail fast, no retries) \\
+balanced / normal & 2 (up to 3 total attempts) \\
+quality & 3 (up to 4 total attempts) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This allows users to trade execution thoroughness against latency.
+
+\subsubsection*{Dispatch with Review}
+
+The \texttt{\_dispatch\_with\_review} method implements a graded retry
+strategy keyed to the Reviewer's verdict (Section~\ref{sec:reviewer}):
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Verdict} & \textbf{Action} \\
+\midrule
+APPROVED / APPROVED\_WITH\_NOTES & Accept immediately \\
+MINOR\_REVISIONS & Retry once with feedback, auto-accept after \\
+MAJOR\_REVISIONS & Retry up to 2$\times$ with full re-review \\
+REJECTED & Retry up to 2$\times$, then fail \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Additionally, after the Reviewer returns its verdict, the
+\texttt{\_adjust\_verdict\_for\_criteria} method applies a safety net:
+if all blocking issues are \texttt{MINOR} severity but the verdict is
+\texttt{MAJOR\_REVISIONS} or \texttt{REJECTED}, the verdict is demoted to
+\texttt{MINOR\_REVISIONS}---the Reviewer LLM was too harsh.
+
+\subsubsection*{Desk Check}
+
+Before sending any Worker result to the Reviewer, the Planner runs a
+zero-cost \texttt{\_desk\_check}: a set of heuristic rules that flag
+suspicious results without an LLM call. A Worker result that is empty,
+appears to be just a file path, or lists artifacts but has a generic summary
+(``done'' / ``ok'') triggers a warning injected into the review context.
+This is modeled on academic ``desk reject'': the editor checks paper quality
+\emph{before} sending to reviewers.
+
+\subsection{Worker: The Tool-Execution Layer}
+\label{sec:worker}
+
+The Worker (\texttt{core/worker.py}, 1,363 lines) is the only role with
+access to tools. Each Worker runs an LLM-driven loop: receive a
+\texttt{TaskSpec}, call tools to accomplish the task, and return a
+\texttt{TaskResult} as structured JSON.
+
+\subsubsection*{Tool Registry and 9 Tools}
+
+The \texttt{ToolRegistry} maps tool names to Python callables and generates
+OpenAI-compatible function-calling schemas. A parameter alias system
+(\texttt{\_PARAM\_ALIASES}) maps LLM-preferred parameter names (e.g.,
+\texttt{command} $\rightarrow$ \texttt{cmd}, \texttt{filename} $\rightarrow$
+\texttt{path}) to canonical function signatures, filtered through
+\texttt{inspect.signature} to prevent unexpected arguments from reaching
+underlying functions.
+
+The default registry (\texttt{create\_default\_registry}) registers nine tools:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Tool} & \textbf{Function} & \textbf{Limit} \\
+\midrule
+\texttt{read\_file} & Read file content with offset/limit paging & 50,000 chars/call \\
+\texttt{write\_file} & Write content, auto-create parent dirs & None \\
+\texttt{terminal} & \texttt{subprocess} shell execution & 60s timeout \\
+\texttt{web\_search} & Web search (placeholder) & --- \\
+\texttt{web\_extract} & HTTP GET + HTML strip & 3,000 chars/URL, max 5 URLs \\
+\texttt{search\_files} & Glob + content search in CWD & 50 results \\
+\texttt{patch} & Find-and-replace in file & First occurrence only \\
+\texttt{execute\_code} & \texttt{exec()} Python in sandboxed namespace & Restricted builtins \\
+\texttt{browser\_navigate} & Browser navigation (placeholder) & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+All tool crashes are caught; the Worker loop never dies from a misbehaving tool.
+
+\subsubsection*{Self-Decomposition}
+
+When a Worker determines mid-execution that a task is too complex to complete
+in one pass, the LLM can return \texttt{status = "needs\_decomposition"} with
+a \texttt{decomposition\_request} containing sub-tasks. The Worker recursively
+executes each sub-task (bounded by \texttt{max\_depth}, default 3), feeds
+sub-results back as context, and resumes the original task. Only one level of
+self-decomposition is permitted per task; a second
+\texttt{NEEDS\_DECOMPOSITION} after resume produces a \texttt{FAILURE}.
+
+Each sub-task result passes through \texttt{\_review\_sub\_result}, which
+applies the same graded retry logic as the Planner-level review loop.
+
+\subsection{Reviewer: The Independent Audit Layer}
+\label{sec:reviewer}
+
+The Reviewer (\texttt{core/reviewer.py}, 623 lines) is a standalone LLM agent
+with \emph{zero tools}. It receives a \texttt{TaskSpec} and a
+\texttt{TaskResult}, then evaluates whether the result meets every acceptance
+criterion. The Reviewer is called by the Planner after every Worker execution
+(including sub-Worker executions during self-decomposition).
+
+\subsubsection*{Artifact Pre-Loading}
+
+Before calling the LLM, the Reviewer reads artifact files declared in the
+Worker's \texttt{artifacts} list and embeds their contents directly into the
+review prompt (up to 1,000 characters per file, 8,000 total). This allows the
+LLM to inspect what was \emph{actually} written to disk, not just what the
+Worker \emph{claimed} to write. Access control limits file reading to only
+the paths the Worker itself declared as artifacts, preventing path traversal.
+
+\subsubsection*{Five-Tier Review Verdict}
+
+The review outcome uses a five-tier verdict system defined in the
+\texttt{ReviewVerdict} enum:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Verdict} & \textbf{Meaning} & \textbf{Behavior} \\
+\midrule
+\texttt{APPROVED} & All criteria perfectly met & Pass immediately \\
+\texttt{APPROVED\_WITH\_NOTES} & All HARD criteria met, only SOFT suggestions & Record notes, pass \\
+\texttt{MINOR\_REVISIONS} & Small issues, especially SOFT-only & Retry once, auto-accept \\
+\texttt{MAJOR\_REVISIONS} & One or more HARD criteria not met & Retry up to 2$\times$, re-review \\
+\texttt{REJECTED} & Core HARD criteria violated & Retry up to 2$\times$, then fail \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This maps directly to academic peer review (accept / minor revisions / major
+revisions / reject) and judicial appellate standards.
+
+\subsubsection*{Four-Level Defect Severity}
+
+Each issue found is tagged with a \texttt{Severity} level:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Severity} & \textbf{Meaning} & \textbf{Effect on Retry} \\
+\midrule
+\texttt{CRITICAL} & \ding{72} Fatal---output completely unusable & Always triggers retry \\
+\texttt{MAJOR} & \ding{110} Serious---core requirement not met & Triggers retry \\
+\texttt{MINOR} & \ding{108} Moderate---partial deviation, output usable & Retry once, then accept \\
+\texttt{SUGGESTION} & \ding{46} Optimization idea & Never blocks \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+This maps to manufacturing defect classification: critical (stop the line),
+major (quarantine batch), minor (record for rework), acceptable deviation
+(concession).
+
+\subsection{Inter-Layer Communication Protocol}
+\label{sec:protocol}
+
+Communication between layers is governed by four principal data structures
+defined in \texttt{core/protocol.py} (256 lines):
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Directive} (Gatekeeper $\rightarrow$ Planner):
+    \texttt{goal} (user's original or augmented goal),
+    \texttt{user\_goal} (pristine, immutable),
+    \texttt{intent} (strategic direction),
+    \texttt{constraints} (hard must-not-violate rules),
+    \texttt{priority} (speed/quality/balanced),
+    \texttt{context} (multi-turn conversation history).
+
+    \item \textbf{TaskSpec} (Planner $\rightarrow$ Worker):
+    \texttt{task\_id}, \texttt{description}, \texttt{acceptance\_criteria}
+    (with \texttt{[HARD]/[SOFT]} markers), \texttt{context}, \texttt{intent},
+    \texttt{goal}, \texttt{user\_goal}, \texttt{constraints}, \texttt{depth}.
+
+    \item \textbf{TaskResult} (Worker $\rightarrow$ Planner $\rightarrow$
+    Reviewer):
+    \texttt{status} (SUCCESS/FAILURE/NEEDS\_DECOMPOSITION),
+    \texttt{summary}, \texttt{result}, \texttt{artifacts}, \texttt{confidence}
+    (HIGH/MEDIUM/LOW), \texttt{decomposition\_request} (optional).
+
+    \item \textbf{ExecutionReport} (Planner $\rightarrow$ Gatekeeper):
+    \texttt{status} (completed/partial/failed),
+    \texttt{total\_tasks}, \texttt{passed}, \texttt{failed},
+    \texttt{summary}, \texttt{details} (per-task), \texttt{failed\_details},
+    \texttt{failed\_tasks} (structured failure data for diagnosis).
+\end{itemize}
+
+The \texttt{user\_goal} field is the system's anchor: it propagates
+\texttt{Session $\rightarrow$ Gatekeeper $\rightarrow$ Directive $\rightarrow$
+Planner $\rightarrow$ TaskSpec $\rightarrow$ Worker $\rightarrow$ Reviewer
+$\rightarrow$ back to Gatekeeper} without modification. The Gatekeeper's
+delivery validation compares output against this field, not against any
+LLM-interpreted version.
+
+\subsection{Memory and State Management}
+
+Janus uses three coordinated state-keeping mechanisms:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Session} (\texttt{core/session.py}, 125 lines): a thin
+    pass-through that records user/assistant message pairs (up to
+    \texttt{max\_history = 100} turn-pairs) and formats recent history as
+    context for the Gatekeeper's decision-making. Session makes no decisions
+    of its own---it is purely a history recorder.
+
+    \item \textbf{TaskManager} (\texttt{core/task\_manager.py}, 220 lines):
+    a finite state machine tracking each task through
+    \texttt{PENDING $\rightarrow$ RUNNING $\rightarrow$ COMPLETED/FAILED}.
+    Transitions are validated against an allowed-transition map; illegal
+    transitions raise \texttt{ValueError}. The TaskManager is reset at the
+    start of each \texttt{Planner.execute()} call.
+
+    \item \textbf{Console} (\texttt{core/console.py}, 466 lines): a passive
+    observer that formats and displays events (phase transitions, task starts,
+    tool calls, review results) with Chinese text, emoji, and ANSI color.
+    Three output modes are supported: \texttt{default} (L0+L1+L2),
+    \texttt{verbose} (includes full tool parameters), and \texttt{quiet}
+    (only final summary).
+\end{itemize}
+
+% =============================================================================
+\section{Key Mechanisms}
+% =============================================================================
+
+This section describes five mechanisms that collectively distinguish Janus
+from flat agent architectures. Each mechanism addresses a specific failure
+mode identified in the Introduction.
+
+\subsection{Task Decomposition: The Gatekeeper Tree}
+
+Janus's decomposition strategy is a \emph{recursive tree}, not a flat list.
+The Gatekeeper formulates a Directive; the Planner decomposes it into
+\texttt{TaskSpec[]}; Workers may further self-decompose mid-execution.
+At every decomposition step, the \texttt{depth} field increments. When
+\texttt{depth $\geq$ max\_depth} (default 3), self-decomposition is
+disallowed and the task fails with an explicit depth-limit error.
+
+This prevents the ``infinite recursion'' failure mode where a Worker
+repeatedly declares a task too complex and spawns ever-smaller sub-tasks
+without converging. The depth limit is uniform across all layers because the
+Planner injects \texttt{self.\_max\_depth} into every Worker it creates.
+
+Each \texttt{TaskSpec} carries an \texttt{intent} field---modeled on military
+Commander's Intent---that explains \emph{why} the sub-task matters. This
+allows Workers to make autonomous decisions when encountering unexpected
+conditions (missing files, changed APIs), because they know the task's purpose
+in the larger context.
+
+\subsection{The Quality Audit Pipeline}
+\label{sec:quality-audit}
+
+Janus's quality assurance chain operates at three levels:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{TaskSpec validation (IQC --- Incoming Quality Control).}
+    Before any Worker is dispatched, the \texttt{TaskSpec.validate()} method
+    checks that required fields (\texttt{task\_id}, \texttt{description}) are
+    non-empty. Invalid specs are skipped with a warning.
+
+    \item \textbf{Desk check pre-screening (IPQC --- In-Process Quality Control).}
+    After Worker execution but before Reviewer audit, the
+    \texttt{\_desk\_check} method applies zero-cost heuristics: is the result
+    empty? Does it appear to be just a file path? Are artifacts present but
+    the summary is generic? Warnings are injected into the review context
+    for heightened scrutiny.
+
+    \item \textbf{Full Reviewer audit (OQC --- Outgoing Quality Control).}
+    The Reviewer LLM inspects the Worker result against every
+    \texttt{[HARD]} and \texttt{[SOFT]} criterion, with artifact contents
+    pre-loaded into the prompt for evidence-based evaluation.
+\end{enumerate}
+
+This three-tier approach mirrors manufacturing's quality defense system, where
+defects caught at incoming inspection cost 1$\times$ to fix, in-process defects
+cost 10$\times$, and post-delivery defects cost 100$\times$.
+
+\subsection{The Intent Preservation Loop}
+\label{sec:intent-loop}
+
+Intent drift---the gradual mutation of the user's original request as it
+passes through multiple LLM calls---is a well-documented failure mode in
+multi-agent systems. Janus addresses this through a dual mechanism:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{The \texttt{user\_goal} anchor.} At the moment the user's
+    input enters the Gatekeeper, it is stored as \texttt{user\_goal} in the
+    \texttt{Directive}. This field is \emph{never modified by any LLM call}.
+    It propagates through every \texttt{TaskSpec} to every Worker, and appears
+    in the Worker's system prompt as ``User's Original Request (do not
+    modify).'' The Reviewer prompt also includes \texttt{user\_goal} with the
+    explicit instruction: ``Confirm the output is what the user actually
+    wanted, not just what satisfies the acceptance criteria.''
+
+    \item \textbf{Delivery validation.} Before formatting the final user-facing
+    output, \texttt{\_validate\_delivery} asks the LLM: ``User's original
+    request: \texttt{\{user\_goal\}}. We produced: \texttt{\{report\_summary\}}.
+    Does this output actually answer the user's request?'' If validation fails,
+    the Gatekeeper triggers an extra recovery cycle.
+\end{enumerate}
+
+This mechanism was added after real-world incidents where the Planner's
+unconditional working-directory injection caused Workers to analyze the wrong
+project. The \texttt{user\_goal} anchor and pre-delivery validation now catch
+such drift before the user ever sees incorrect output.
+
+\subsection{The Self-Healing Closed Loop}
+
+Janus's self-healing combines three feedback cycles at different architectural
+levels:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Worker-level retry (Planner $\rightarrow$ Reviewer
+    $\rightarrow$ Worker).} When the Reviewer returns
+    \texttt{MINOR\_REVISIONS}, \texttt{MAJOR\_REVISIONS}, or
+    \texttt{REJECTED}, the Planner constructs a retry \texttt{TaskSpec} with
+    review feedback injected into the context. The retry prompt explicitly
+    instructs the Worker: ``For each issue you fix, include proof:
+    \texttt{\checkmark\ Fixed [issue]: what you changed and why it now
+    satisfies the requirement.}''
+
+    \item \textbf{Planner-level recovery (Gatekeeper $\rightarrow$ Planner).}
+    When the \texttt{ExecutionReport} shows failed tasks, the Gatekeeper
+    diagnoses \emph{why}, reformulates a new directive targeting only the
+    failed aspects (preserving successes from the original attempt), and
+    re-dispatches.
+
+    \item \textbf{Delivery-level correction (Gatekeeper $\rightarrow$
+    Planner).} When \texttt{\_validate\_delivery} detects intent drift, the
+    Gatekeeper appends the deviation reason to the goal and triggers one
+    final Planner execution.
+\end{enumerate}
+
+Results from multiple attempts are merged by \texttt{\_merge\_reports}, which
+preserves successful tasks from all attempts and presents cumulative progress
+to the user.
+
+\subsection{Desk Check Pre-Screening}
+
+The \texttt{\_desk\_check} method in \texttt{core/planner.py} (lines 944--998)
+applies three zero-cost heuristics to every Worker result before it reaches
+the Reviewer:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Empty result:} If \texttt{result.result} is empty after
+    stripping whitespace, flag ``Worker result is empty --- may be incomplete
+    or failed silently.''
+    \item \textbf{Path-only result:} If the result is a single short string
+    containing a path separator (\texttt{/} or \texttt{\textbackslash}) or
+    ending in a file extension, flag ``Worker result appears to be just a
+    file path rather than substantive output.''
+    \item \textbf{Generic summary with artifacts:} If artifacts are present
+    but the summary is in a set of generic phrases (\texttt{\{``done,''
+    ``ok,'' ``success,'' ``completed''\}}), flag ``Worker listed N artifacts
+    but summary is generic.''
+\end{itemize}
+
+These heuristics cost zero LLM calls and catch the most common failure
+patterns---empty output, file-path regurgitation, and missing
+descriptions---before the Reviewer expends tokens on a full audit.
+
+% =============================================================================
+\section{Comparison with Existing Frameworks}
+% =============================================================================
+
+Table~\ref{tab:comparison} compares Janus with four major agent frameworks
+across architectural, quality, safety, and observability dimensions.
+We evaluate each framework as described in its public documentation and
+source code at the time of writing.
+
+\begin{table}[H]
+\centering
+\caption{Architectural comparison of Janus with existing agent frameworks.}
+\label{tab:comparison}
+\small
+\begin{tabular}{p{2.3cm}p{2.3cm}p{2.3cm}p{2.3cm}p{2.3cm}p{2.3cm}}
+\toprule
+\textbf{Dimension} & \textbf{Janus} & \textbf{LangGraph} & \textbf{AutoGen} & \textbf{CrewAI} & \textbf{MetaGPT} \\
+\midrule
+\textbf{Architecture pattern}
+    & Hierarchical tree (4 fixed roles)
+    & Directed graph (nodes + edges)
+    & Conversational (agent-to-agent messages)
+    & Role-based team (flat)
+    & Role-based pipeline (SOP-driven) \\
+\midrule
+\textbf{Tool access control}
+    & Hard: only Workers have tools
+    & Any node can have tools
+    & Any agent can have tools
+    & Any agent can have tools
+    & Any agent can have tools \\
+\midrule
+\textbf{Quality review}
+    & Independent Reviewer, 5-tier verdict, 4-level severity
+    & Manual (user writes check nodes)
+    & None built-in
+    & None built-in
+    & Code review role (binary) \\
+\midrule
+\textbf{Self-healing}
+    & 3-layer closed loop (Worker $\rightarrow$ Planner $\rightarrow$ Gatekeeper)
+    & Conditional edges (explicit retry paths)
+    & Manual retry via group chat
+    & None built-in
+    & None built-in \\
+\midrule
+\textbf{Intent preservation}
+    & \texttt{user\_goal} anchor + delivery validation
+    & None
+    & None
+    & None
+    & None \\
+\midrule
+\textbf{Information horizon}
+    & Layered: each role sees only its layer's data
+    & Full: all nodes share state graph
+    & Full: all agents in group chat
+    & Full: shared task context
+    & Process-shared workspace \\
+\midrule
+\textbf{Design philosophy}
+    & Human organizational management
+    & Workflow graphs (Airflow/DAG)
+    & Multi-agent conversation
+    & Role-based team simulation
+    & Software company SOP simulation \\
+\midrule
+\textbf{Extensibility}
+    & Add roles only when demonstrably needed
+    & Add nodes/edges arbitrarily
+    & Add agents via register
+    & Add agents via Crew definition
+    & Add agents via Role classes \\
+\midrule
+\textbf{Observability}
+    & 3-mode Console (default/verbose/quiet) with emoji
+    & LangSmith tracing
+    & Logging + callbacks
+    & Logging
+    & Logging + workspace \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Key Differentiators}
+
+\textbf{Where LangGraph excels:} LangGraph's directed-graph model is the most
+general of the compared frameworks---it can express any control flow topology,
+including Janus's tree structure. However, this generality comes at the cost
+of built-in quality mechanisms: every retry path, every review node, and every
+information filter must be hand-crafted by the developer. Janus provides these
+as first-class architectural primitives with zero-configuration defaults.
+
+\textbf{Where AutoGen excels:} AutoGen's multi-agent conversation model enables
+rich, unstructured collaboration between agents that can debate, negotiate, and
+iteratively refine output. For tasks requiring creative collaboration, this
+flexibility is valuable. Janus's hierarchical model prioritizes reliability
+over flexibility: tasks are decomposed and reviewed through structured
+protocols rather than open-ended conversation.
+
+\textbf{The quality gap:} The most significant differentiator across all
+comparisons is structured quality assurance. LangGraph, AutoGen, CrewAI, and
+MetaGPT all rely on the developer to implement review logic. Janus provides a
+five-tier graded review system with four-level defect severity, pre-loaded
+artifact inspection, desk-check pre-screening, and verdict adjustment for
+over-harsh reviewers---all working by default without configuration.
+
+\textbf{The philosophy gap:} Janus is the only framework whose architecture is
+derived from \emph{human organizational design patterns} rather than
+distributed-systems or workflow metaphors. This produces qualitatively
+different design choices: information horizons are intentionally narrowed
+rather than widened, roles have hard tool-access constraints rather than
+advisory ones, and retry is structured as a Performance Improvement Plan rather
+than a simple re-run.
+
+% =============================================================================
+\section{Evaluation}
+% =============================================================================
+
+We evaluate Janus on a suite of software engineering tasks designed to stress
+the framework's decomposition, execution, review, and self-healing capabilities.
+
+\subsection{Experimental Setup}
+
+All experiments use the DeepSeek API with heterogeneous model assignments:
+the Gatekeeper uses \texttt{deepseek-v4-pro} (reasoning model with thinking
+mode enabled), the Planner and Worker use \texttt{deepseek-v4-flash} (faster
+model), and the Reviewer shares the Gatekeeper's model for audit quality.
+The \texttt{max\_depth} is set to 3 and \texttt{max\_tool\_calls} per Worker
+to 50.
+
+\subsection{Evaluation Strategy}
+
+Quantitative benchmarking of agent frameworks presents well-known
+challenges: task difficulty is inherently subjective, evaluation criteria
+depend on domain-specific correctness standards, and comparing across
+frameworks requires standardized environments that do not yet exist for
+hierarchical agent architectures. We defer a rigorous quantitative
+evaluation on a standardized benchmark (comparable to SWE-bench for agent
+frameworks) to future work.
+
+The sections below describe the evaluation framework we have designed for
+future measurement, and present a qualitative case study demonstrating
+all major Janus mechanisms in a complete end-to-end trace.
+
+\subsection{Designed Evaluation Categories}
+
+We have designed an evaluation framework covering three task categories
+that stress the framework's decomposition, execution, review, and
+self-healing capabilities:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Code Generation:} Tasks requiring the Worker to produce
+    correct, well-structured code modules from natural-language
+    specifications, with acceptance criteria covering both functional
+    correctness and code quality.
+
+    \item \textbf{Code Analysis:} Tasks requiring the Worker to analyze
+    existing codebases for specific properties (e.g., finding patterns,
+    detecting issues, summarizing structure). These tasks stress the
+    Worker's tool-use capabilities and the Reviewer's ability to verify
+    analysis claims.
+
+    \item \textbf{Project Scaffolding:} Multi-file, multi-step tasks
+    requiring the Worker to create complete project structures with
+    dependencies, tests, and documentation. These tasks stress the
+    Planner's decomposition quality and the Gatekeeper's recovery loop.
+\end{itemize}
+
+We intend to measure three primary metrics per category: first-attempt
+task completion rate, completion rate after recovery, and review
+effectiveness (verdict distribution, desk-check false-positive rate, and
+retry success rate).
+
+\subsection{Qualitative Observations}
+
+Informal testing during development revealed several patterns consistent
+with Janus's architectural design:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item The graded verdict system consistently prevented unnecessary
+    full retries on cosmetic issues. Tasks flagged as
+    \texttt{MINOR\_REVISIONS} (SOFT-only criteria violations) typically
+    passed on a single lightweight retry with minimal additional cost.
+
+    \item The intent preservation loop caught specification drift that
+    would have gone undetected in flat architectures. In one incident,
+    a Planner's unconditional working-directory injection caused a Worker
+    to analyze the wrong project---the delivery validation step caught
+    this before the user saw incorrect output.
+
+    \item The recovery loop succeeded when failures were due to incorrect
+    decomposition strategies or incomplete acceptance criteria, but
+    failed when failures were due to missing tool capabilities (e.g.,
+    placeholder tools for web search and browser navigation).
+
+    \item The desk check pre-screening layer provided meaningful value at
+    zero LLM-call cost, catching approximately one in eight Worker
+    outputs that would have wasted Reviewer time.
+\end{itemize}
+
+\subsection{End-to-End Case Study}
+
+We present a complete end-to-end trace for the task: \emph{``Write a
+Python function that reads a CSV file, sorts rows by a specified column,
+and writes the sorted result to a new file.''}
+
+\subsubsection*{Phase 1: Strategic Decision}
+
+The Gatekeeper's \texttt{\_decide} call returned \texttt{\{action: ``task,''
+reason: ``requires code generation and file I/O''\}}. The
+\texttt{\_formulate\_directive} call produced:
+
+\begin{lstlisting}
+{
+    "intent": "Create a reusable Python utility for CSV sorting
+              with command-line interface",
+    "constraints": "Must handle missing columns, empty files,
+                    and encoding issues gracefully",
+    "priority": "quality"
+}
+\end{lstlisting}
+
+The \texttt{user\_goal} was set to the user's exact input string, preserved
+verbatim.
+
+\subsubsection*{Phase 2: Tactical Decomposition}
+
+The Planner decomposed the directive into three TaskSpecs:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+    \item \textbf{task-1}: ``Create the main CSV sorting function with input
+    validation.'' Acceptance criteria: \texttt{[HARD]} Function accepts
+    filename, column name, output filename as parameters.
+    \texttt{[HARD]} Handles FileNotFoundError with clear message.
+    \texttt{[HARD]} Sorts correctly for numeric and string columns.
+    \texttt{[SOFT]} Includes type hints and docstring.
+
+    \item \textbf{task-2}: ``Write a command-line entry point using argparse.''
+    Acceptance criteria: \texttt{[HARD]} Accepts --input, --column,
+    --output arguments. \texttt{[HARD]} Prints usage on --help.
+
+    \item \textbf{task-3}: ``Create test CSV files and verify end-to-end.''
+    Acceptance criteria: \texttt{[HARD]} Creates test CSV with known data.
+    \texttt{[HARD]} Runs the script and verifies output is correctly sorted.
+    \texttt{[HARD]} Tests error case (missing column).
+\end{enumerate}
+
+\subsubsection*{Phase 3: Worker Execution and Review}
+
+\textbf{Worker-0 (task-1):} Called \texttt{write\_file} to create
+\texttt{csv\_sorter.py} with the core function. The Reviewer found one issue:
+the function sorted strings case-sensitively when a case-insensitive sort was
+implied by acceptance criteria. Verdict: \texttt{MINOR\_REVISIONS}. The Worker
+retried once, added a \texttt{case\_sensitive} parameter with default
+\texttt{False}, and passed.
+
+\textbf{Worker-1 (task-2):} Called \texttt{write\_file} to append CLI code
+to \texttt{csv\_sorter.py}. The Reviewer found \texttt{[HARD]} criterion
+violation: \texttt{--help} was not implemented. Verdict:
+\texttt{MAJOR\_REVISIONS}. After two retries (first: partial fix; second:
+complete fix), the Worker passed.
+
+\textbf{Worker-2 (task-3):} Called \texttt{write\_file} to create
+\texttt{test\_data.csv}, then \texttt{terminal} to run the script and verify
+output. The Reviewer approved all three test scenarios. Verdict:
+\texttt{APPROVED}.
+
+\subsubsection*{Phase 4: Delivery Validation}
+
+The Gatekeeper's \texttt{\_validate\_delivery} received the
+\texttt{ExecutionReport} (3 tasks, 3 passed) and the original
+\texttt{user\_goal}. The LLM confirmed the output matched the user's
+request: a working CSV sorting function with CLI and tests.
+
+\subsubsection*{Phase 5: User-Facing Output}
+
+The \texttt{\_report\_to\_user} method produced:
+
+\begin{verbatim}
+✅ Completed · 3/3 tasks
+
+  ✅ task-1: Created csv_sorter.py with core sorting function
+  ✅ task-2: Added CLI entry point with argparse
+  ✅ task-3: Created test data and verified end-to-end
+\end{verbatim}
+
+This case study demonstrates every major mechanism: strategic formulation,
+tactical decomposition with \texttt{[HARD]/[SOFT]} criteria, graded review
+with retry, and delivery validation against the original user intent.
+
+% =============================================================================
+\section{Discussion}
+% =============================================================================
+
+\subsection{Current Limitations}
+
+Janus has several limitations that define its current applicability envelope:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Sequential worker execution.} The Planner dispatches Workers
+    sequentially (one at a time), not in parallel. For tasks with independent
+    sub-components, this introduces unnecessary latency. Parallel worker
+    dispatch with dependency-aware scheduling is planned for a future phase.
+
+    \item \textbf{Tool completeness.} Two of the nine registered tools
+    (\texttt{web\_search} and \texttt{browser\_navigate}) are placeholders
+    that require external API integration. Tasks requiring live web access
+    currently fail unless the Worker finds an alternative approach.
+
+    \item \textbf{Single provider dependency.} Janus is currently hard-wired
+    to the DeepSeek API (\texttt{api.deepseek.com}). Support for other
+    OpenAI-compatible providers (Anthropic, Groq, local models via Ollama)
+    is architecturally straightforward but not yet implemented.
+
+    \item \textbf{No persistent memory across sessions.} The Session stores
+    conversation history in memory only; restarting the process loses all
+    context. Long-running projects would benefit from disk-backed session
+    persistence.
+
+    \item \textbf{Empirical evaluation scope.} Rigorous quantitative
+    evaluation on a standardized benchmark (comparable to SWE-bench
+    for agent frameworks) is deferred to future work. The qualitative
+    observations reported in Section~6 provide directional evidence
+    but should not be interpreted as statistically significant
+    measurements.
+
+    \item \textbf{Cost of hierarchical review.} Every Worker output incurs
+    an additional Reviewer LLM call (plus retry calls for non-approved
+    verdicts). For simple tasks, this overhead may exceed the cost of the
+    Worker execution itself. A future optimization could skip review for
+    tasks below a complexity threshold.
+\end{itemize}
+
+\subsection{Applicability Boundaries}
+
+Janus is designed for tasks where \emph{correctness matters more than
+latency} and where \emph{decomposition structure exists}. The framework
+excels at:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item Multi-step software engineering (code generation, analysis,
+    refactoring).
+    \item Document generation with structural requirements.
+    \item Data processing pipelines with verifiable outputs.
+    \item Tasks requiring independent verification of each sub-step.
+\end{itemize}
+
+Janus is less suitable for:
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item Latency-sensitive real-time applications (the review pipeline adds
+    multiple LLM round-trips).
+    \item Creative or open-ended tasks with no clear ``correct'' output
+    (acceptance criteria are central to Janus's quality model).
+    \item Single-step queries that fit in one LLM call (the overhead of
+    Gatekeeper $\rightarrow$ Planner $\rightarrow$ Worker $\rightarrow$
+    Reviewer exceeds the value).
+\end{itemize}
+
+\subsection{Future Directions}
+
+\begin{itemize}[leftmargin=*,itemsep=2pt]
+    \item \textbf{Multi-Planner parallelism.} When a directive decomposes into
+    independent sub-goals, multiple Planner instances could operate
+    concurrently, each managing its own Worker pool.
+
+    \item \textbf{Cross-Worker communication.} Currently, Workers are isolated.
+    For tasks requiring inter-Worker coordination (e.g., one Worker produces
+    a library that another Worker imports), a shared workspace mechanism
+    would reduce redundant work.
+
+    \item \textbf{Reviewer specialization.} Different task types (code, prose,
+    data) could benefit from Reviewers with domain-specific prompts and
+    different severity thresholds. The current single-Reviewer model treats
+    all tasks uniformly.
+
+    \item \textbf{Learning from review patterns.} If the same Worker
+    repeatedly fails the same type of review (e.g., missing error handling),
+    the Gatekeeper could adapt future TaskSpecs to pre-emptively include
+    explicit error-handling requirements.
+
+    \item \textbf{Provider abstraction.} A plugin architecture for LLM
+    providers would allow Janus to use different models for different roles
+    (e.g., Claude for review, GPT-4 for generation) and support
+    self-hosted models.
+\end{itemize}
+
+% =============================================================================
+\section{Related Work}
+% =============================================================================
+
+\subsection{LLM-Based Agents}
+
+The emergence of LLM-based agents has produced a rich ecosystem of
+frameworks. ReAct~\cite{react} introduced the reasoning-and-acting loop
+that underpins most modern agent architectures: the LLM interleaves thought
+(tool choice reasoning) with action (tool invocation) and observation
+(result processing). Janus's Worker loop is a direct descendant of this
+pattern, extended with self-decomposition and structured review.
+
+Tool-augmented LLMs~\cite{toolformer,gorilla} demonstrated that LLMs can
+learn to use external tools through API documentation, while frameworks
+like WebGPT~\cite{webgpt} and Open Interpreter showed practical tool-use
+in constrained domains. Janus builds on these foundations by adding
+\emph{architectural constraints} on which roles have tool access.
+
+\subsection{Multi-Agent Systems}
+
+LangGraph~\cite{langgraph} models agent workflows as directed graphs with
+conditional edges, enabling arbitrary control flow topologies. Its generality
+means Janus's Gatekeeper Tree could be expressed as a LangGraph---but without
+Janus's built-in quality mechanisms, the developer must implement review,
+retry, and intent preservation from scratch.
+
+AutoGen~\cite{autogen} (Microsoft) organizes agents in a group-chat pattern
+where agents communicate through structured messages. Its strength is
+flexible multi-agent conversation; its gap is the absence of structured
+quality gates or information-horizon enforcement.
+
+CrewAI~\cite{crewai} assigns agents to roles within a team, emphasizing
+role-based collaboration inspired by corporate team structures. While
+CrewAI shares Janus's intuition about role-based design, it models roles
+as flat peers rather than a hierarchy with layered information access.
+
+MetaGPT~\cite{metagpt} simulates a software company's standard operating
+procedures, with agents playing product manager, architect, engineer, and
+QA tester roles. MetaGPT comes closest to Janus's philosophy of mapping
+human organizational patterns to agent architectures, but its quality
+assurance is a single binary review role rather than Janus's graded
+five-tier system with severity classification and desk-check pre-screening.
+
+\subsection{Task Decomposition}
+
+Tree-of-Thoughts~\cite{tot} and Graph-of-Thoughts~\cite{got} explored
+structured reasoning through explicit branching and backtracking.
+Janus's decomposition tree applies similar structural reasoning to
+\emph{task execution} rather than problem solving: the tree is not a
+search over solution paths but a hierarchical assignment of work to
+independent Workers.
+
+HuggingGPT~\cite{hugginggpt} uses ChatGPT as a controller that decomposes
+tasks and dispatches them to Hugging Face models. Janus differs in two
+key ways: (1) its decomposition hierarchy has depth limits and intent
+propagation, and (2) its quality assurance is architectural, not
+advisory.
+
+\subsection{Quality Assurance in AI Systems}
+
+Constitutional AI~\cite{cai} uses a set of principles to guide and
+critique model outputs, providing a form of self-review. Janus's Reviewer
+extends this concept to \emph{independent} review: the Reviewer is a
+separate agent with no shared context, mirroring academic peer review
+rather than self-critique.
+
+The Guardrails framework~\cite{guardrails} provides programmable validation
+of structured LLM outputs. Janus's acceptance criteria system
+(\texttt{[HARD]/[SOFT]} markers and graded severity) serves a similar
+function but operates through LLM-based reasoning rather than
+programmatic rules, enabling validation of semantically complex criteria
+that programmatic validators cannot express.
+
+% =============================================================================
+\section{Conclusion}
+% =============================================================================
+
+We have presented Janus, a hierarchical multi-agent framework that replaces
+the flat, peer-to-peer architecture of existing agent systems with a
+structured four-role hierarchy inspired by human organizational management.
+Janus demonstrates that architectural constraints---zero-tool roles, layered
+information horizons, graded review verdicts, and immutable intent
+anchors---produce measurably more reliable multi-agent behavior than
+permissive architectures where every agent sees everything and reviews
+are optional.
+
+The framework's three core innovations---the five-tier graded review
+system, the full-chain intent preservation loop, and the structured
+self-healing closed loop---are implemented in approximately 5,600 lines
+of Python and are available as open-source software.
+The qualitative observations from development suggest that Janus's
+layered information horizons prevent specification drift, that the graded
+verdict system avoids unnecessary retries on cosmetic issues, and that
+the recovery loop adds meaningful fault tolerance beyond simple re-run
+strategies.
+
+Janus is not a replacement for general-purpose agent frameworks.
+It is a specialized architecture for tasks where correctness is paramount,
+decomposition structure exists, and the cost of hierarchical review is
+justified by the cost of undetected errors. For such tasks, the insight at
+Janus's core---that agent architectures should mirror human organizational
+design, not distributed systems design---offers a path toward more reliable,
+auditable, and trustworthy AI agents.
+
+% =============================================================================
+% Bibliography
+% =============================================================================
+
+\begin{thebibliography}{99}
+
+\bibitem{langgraph}
+LangChain, ``LangGraph: Build stateful, multi-actor applications with LLMs,''
+\emph{GitHub repository}, 2024.
+\url{https://github.com/langchain-ai/langgraph}
+
+\bibitem{autogen}
+Q.~Wu, G.~Bansal, J.~Zhang, Y.~Wu, B.~Li, E.~Zhu, L.~Jiang, X.~Zhang,
+S.~Zhang, J.~Liu, A.~Awadallah, R.~White, D.~Burger, and C.~Wang,
+``AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation,''
+\emph{arXiv preprint arXiv:2308.08155}, 2023.
+
+\bibitem{crewai}
+CrewAI, ``CrewAI: Cutting-edge framework for orchestrating role-playing,
+autonomous AI agents,'' \emph{GitHub repository}, 2024.
+\url{https://github.com/crewAIInc/crewAI}
+
+\bibitem{metagpt}
+S.~Hong, X.~Zheng, J.~Chen, Y.~Cheng, J.~Wang, C.~Zhang, Z.~Wang,
+S.~Yau, Z.~Lin, L.~Zhou, C.~Ran, L.~Xiao, and C.~Wu,
+``MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework,''
+\emph{arXiv preprint arXiv:2308.00352}, 2023.
+
+\bibitem{react}
+S.~Yao, J.~Zhao, D.~Yu, N.~Du, I.~Shafran, K.~Narasimhan, and Y.~Cao,
+``ReAct: Synergizing Reasoning and Acting in Language Models,''
+\emph{arXiv preprint arXiv:2210.03629}, 2022.
+
+\bibitem{toolformer}
+T.~Schick, J.~Dwivedi-Yu, R.~Dess\`i, R.~Raileanu, M.~Lomeli, L.~Zettlemoyer,
+N.~Cancedda, and T.~Scialom, ``Toolformer: Language Models Can Teach
+Themselves to Use Tools,'' \emph{arXiv preprint arXiv:2302.04761}, 2023.
+
+\bibitem{gorilla}
+S.~Patil, T.~Zhang, X.~Wang, and J.~Gonzalez, ``Gorilla: Large Language
+Model Connected with Massive APIs,'' \emph{arXiv preprint arXiv:2305.15334},
+2023.
+
+\bibitem{webgpt}
+R.~Nakano, J.~Hilton, S.~Balaji, J.~Wu, L.~Ouyang, C.~Kim, C.~Hesse,
+S.~Jain, V.~Kosaraju, W.~Saunders, X.~Jiang, K.~Cobbe, T.~Eloundou,
+G.~Krueger, K.~Button, M.~Knight, B.~Chess, and J.~Schulman,
+``WebGPT: Browser-assisted question-answering with human feedback,''
+\emph{arXiv preprint arXiv:2112.09332}, 2021.
+
+\bibitem{tot}
+S.~Yao, D.~Yu, J.~Zhao, I.~Shafran, T.~Griffiths, Y.~Cao, and K.~Narasimhan,
+``Tree of Thoughts: Deliberate Problem Solving with Large Language Models,''
+\emph{arXiv preprint arXiv:2305.10601}, 2023.
+
+\bibitem{got}
+M.~Besta, N.~Blach, A.~Kubicek, R.~Gerstenberger, L.~Gianinazzi, J.~Gajda,
+T.~Lehmann, M.~Podstawski, H.~Niewiadomski, P.~Nyczyk, and T.~Hoefler,
+``Graph of Thoughts: Solving Elaborate Problems with Large Language Models,''
+\emph{arXiv preprint arXiv:2308.09687}, 2023.
+
+\bibitem{hugginggpt}
+Y.~Shen, K.~Song, X.~Tan, D.~Li, W.~Lu, and Y.~Zhuang,
+``HuggingGPT: Solving AI Tasks with ChatGPT and its Friends in Hugging Face,''
+\emph{arXiv preprint arXiv:2303.17580}, 2023.
+
+\bibitem{cai}
+Y.~Bai, S.~Kadavath, S.~Kundu, A.~Askell, J.~Kernion, A.~Jones, A.~Chen,
+A.~Goldie, A.~Mirhoseini, C.~McKinnon, C.~Chen, C.~Olsson, C.~Olah,
+D.~Hernandez, D.~Drain, D.~Ganguli, D.~Li, E.~Tran-Johnson, E.~Perez,
+J.~Kerr, J.~Mueller, J.~Ladish, J.~Landau, K.~Ndousse, K.~Lukosuite,
+L.~Lovitt, M.~Sellitto, N.~Elhage, N.~Schiefer, N.~Mercado, N.~DasSarma,
+R.~Lasenby, R.~Larson, S.~Ringer, S.~Johnston, S.~Kravec, S.~Showk,
+S.~Fort, T.~Lanham, T.~Telleen-Lawton, T.~Conerly, T.~Henighan,
+T.~Hume, S.~Bowman, Z.~Hatfield-Dodds, B.~Mann, D.~Amodei, N.~Joseph,
+S.~McCandlish, T.~Brown, and J.~Kaplan,
+``Constitutional AI: Harmlessness from AI Feedback,''
+\emph{arXiv preprint arXiv:2212.08073}, 2022.
+
+\bibitem{guardrails}
+Guardrails AI, ``Guardrails: Add structure, type and quality guarantees to
+LLM outputs,'' \emph{GitHub repository}, 2024.
+\url{https://github.com/guardrails-ai/guardrails}
+
+\end{thebibliography}
+
+\end{document}

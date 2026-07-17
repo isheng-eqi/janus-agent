@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Janus：一种具有结构化质量保证的分层多Agent框架</title>
+<style>
+  body { max-width:820px; margin:40px auto; padding:0 24px; font:16px/1.8 "PingFang SC","Microsoft YaHei","Noto Sans SC",sans-serif; color:#1a1a1a; }
+  h1 { font-size:24px; text-align:center; margin:16px 0 4px; }
+  h2 { font-size:20px; border-bottom:2px solid #333; padding-bottom:6px; margin:40px 0 16px; }
+  h3 { font-size:17px; margin:28px 0 10px; color:#2c3e50; }
+  .authors { text-align:center; font-size:15px; color:#555; margin:8px 0 0; }
+  .meta { text-align:center; font-size:14px; color:#888; margin:4px 0 24px; }
+  .abstract { background:#f5f6fa; border-left:4px solid #3498db; padding:16px 20px; margin:20px 0; font-size:15px; }
+  .abstract h3 { margin:0 0 8px; font-size:16px; color:#3498db; border:none; }
+  table { width:100%; border-collapse:collapse; margin:16px 0; font-size:14px; }
+  th { background:#333; color:#fff; padding:8px 10px; text-align:left; }
+  td { border:1px solid #ddd; padding:6px 10px; vertical-align:top; }
+  tr:nth-child(even) td { background:#f9f9f9; }
+  pre { background:#f0f0f0; padding:12px 16px; overflow-x:auto; font:13px/1.5 Consolas,monospace; border-radius:4px; }
+  code { background:#eee; padding:1px 4px; border-radius:3px; font-size:14px; }
+  ul, ol { padding-left:24px; }
+  li { margin:4px 0; }
+  .note { background:#fff9e6; border-left:4px solid #f39c12; padding:12px 16px; margin:16px 0; font-size:14px; }
+  .case { background:#eaf7ea; border-left:4px solid #27ae60; padding:12px 16px; margin:16px 0; }
+  .arch-diagram { background:#1a1a2e; color:#0f0; font:13px/1.4 Consolas,monospace; padding:16px 20px; margin:16px 0; border-radius:6px; white-space:pre; }
+</style>
+</head>
+<body>
+
+<h1>Janus：一种具有结构化质量保证的分层多Agent框架</h1>
+<p class="authors">王炳晟</p>
+<p class="meta">太原理工大学 &nbsp;·&nbsp; GitHub: isheng-eqi/janus &nbsp;·&nbsp; 2026年7月</p>
+
+<div class="abstract">
+<h3>摘要</h3>
+<p>Janus是一个分层多Agent框架，用于自主任务执行。它将基于大语言模型的Agent组织成四角色架构，灵感来源于人类组织管理而非分布式系统设计。框架引入了<strong>Gatekeeper Tree（门卫树）</strong>模式：<strong>Gatekeeper</strong>（军师，零工具）制定方向并验证交付；<strong>Planner</strong>（参谋，零工具）将指令分解为可执行的工作包；<strong>Worker</strong>（士兵，拥有九种具体工具）执行实际工作；<strong>Reviewer</strong>（督察，零工具）根据结构化验收标准检查每一个交付物。</p>
+<p>Janus引入了三项核心创新：(1) 五级分级审查裁决体系（批准、附注批准、小幅修改、大幅修改、驳回），配合四级缺陷严重度分类（致命、严重、轻微、建议），直接借鉴学术同行评审和制造业质量控制；(2) 全链路意图保全机制——用户的原始请求以不可变锚点的形式贯穿每一层，用于交付前验证；(3) 自愈闭环——结构化诊断、策略重构与跨恢复尝试的结果合并。</p>
+</div>
+
+<h2>1. 引言</h2>
+
+<h3>1.1 背景与问题</h3>
+<p>大语言模型（LLM）的崛起催生了AI Agent的新范式，各类Agent框架——LangGraph、AutoGen、CrewAI、MetaGPT——提供了用LLM构建自主系统的脚手架。然而，现有框架共享三个根本性缺陷：</p>
+
+<p><strong>1. 扁平化架构。</strong>大多数框架将所有Agent置于对等地位，任何Agent都能看到所有中间结果。这在信息理论上是完备的，但在工程上是灾难性的——区分"任务是否成功"的Agent不应该需要阅读每个Worker的每一行工具调用输出。上下文窗口是稀缺资源，无差别信息暴露稀释了信号噪声比。</p>
+
+<p><strong>2. 规模下的质量坍塌。</strong>现有框架缺乏结构化的质量关卡。审查——如果存在的话——是同一个LLM对自己产出的二元通过/失败判断，这违反每个成熟人类组织都遵守的"关注点分离"原则。结果是，复杂的多步任务沦为"碰运气式的正确性"。</p>
+
+<p><strong>3. 意图漂移。</strong>当用户请求经过多次LLM间转手——从编排器到分解器到执行器——每一层都会引入微小的解释偏差。到输出抵达用户时，原始意图可能已经悄然变异。没有任何现有框架系统性地防范此问题。</p>
+
+<h3>1.2 Janus 的核心洞察</h3>
+<p>人类组织已经花了数千年解决这些问题。军队将战略指挥与战术执行分离。政府设立独立的总监察长来审计行政机关。制造业部署三级质量检验（来料检验、过程检验、出厂检验）。学术出版将同行评审结果分级：接受/小幅修改/大幅修改/驳回。法院根据审查对象的不同适用不同的审查标准。</p>
+
+<p><strong>Janus的核心洞察是：LLM Agent的架构应该镜像人类组织设计，而非分布式系统设计。</strong>LangGraph和AutoGen将架构建立在工作流图和消息传递拓扑上；Janus将架构建立在对人类组织数千年经验中提炼出的关注点分离、问责层级和结构化质量保证之上。</p>
+
+<h3>1.3 核心贡献</h3>
+<ol>
+  <li><strong>Gatekeeper Tree架构</strong>：一个固定的四角色层级，具有硬性的工具访问约束——只有Worker可以调用工具；Gatekeeper、Planner和Reviewer通过纯粹的LLM推理操作，不得接触文件系统或执行代码。</li>
+  <li><strong>五级分级审查体系</strong>：每个Worker交付物都接受独立审查，裁决从批准到驳回，缺陷严重度从致命到建议，加[HARD]/[SOFT]验收标准标记——整套体系映射自学术同行评审和制造业质量管理。</li>
+  <li><strong>全链路意图保全</strong>：用户的原始请求（user_goal）作为不可变锚点贯穿所有层，交付前验证以此而不是LLM转述为准。</li>
+  <li><strong>结构化自愈闭环</strong>：失败触发的是绩效改进计划（PIP）模式的恢复流程——诊断→重构→重试→合并——而非简单的重新运行。</li>
+  <li><strong>设计与评估</strong>：约5,600行Python的完整开源实现，包含详细的端到端案例研究和定性分析。</li>
+</ol>
+
+<h2>2. 设计哲学</h2>
+
+<h3>2.1 为什么需要分层？</h3>
+<p>LLM的上下文窗口既是最大资产也是最紧约束。加载到上下文中的每一个token都在消耗注意力预算，并有可能稀释信号噪声比。扁平架构——每个Agent都看到每个中间结果——在信息完备性上是最优的，但在信息相关性上是灾难性的。"判断任务是否成功"的Agent与"读取每个Worker每一行工具输出"的Agent不应该是同一个人。</p>
+<p>人类制度恰恰因为这个原因收敛到分层。将军不阅读每个士兵的行动后报告；CEO不审查每个工程师提交的每一行代码。<strong>每一层对其下层进行压缩和解读，在去除噪声的同时添加判断。</strong></p>
+
+<h3>2.2 四项设计原则</h3>
+
+<p><strong>原则一：关注点分离。</strong>没有一个Agent应该既产出工作又评判其质量。在Janus中，Gatekeeper设定方向但绝不执行；Worker执行但绝不自我审查；Reviewer审计但绝不修改。我们在工具层面强制执行：Gatekeeper、Planner和Reviewer以零工具初始化——它们不能读文件、写文件或执行命令。只有Worker拥有工具访问权。这不是建议，而是由ToolRegistry执行的硬性架构约束。这一原则直接映射到军事的参谋/前线分离（制定计划的人不指挥部队）和政府的监察长模式（审计者独立于被审计机构）。</p>
+
+<p><strong>原则二：不信任任何输出。</strong>每个Worker产出必须经过独立审查才能被接受。即使一个Worker返回了10个成功结果，第11个仍然必须走相同的审查管道。我们将此称为"不信任任何输出"原则，类比制造业的100%来料检验——从统计抽样切换到全检的设计决策。</p>
+
+<p><strong>原则三：递归分解。</strong>复杂任务不是一次性解决的，而是通过将问题递归地分解为更小、更可验证的子任务来解决的。Gatekeeper制定战略方向；Planner将方向分解为Worker可执行的TaskSpec；Worker可以在执行中进一步自行分解。深度计数器在每一步递增，max_depth=3的硬上限防止无限递归。</p>
+
+<p><strong>原则四：人在回路中。</strong>虽然Janus自主运行，但其架构在每个决策点都保持了透明度。Gatekeeper暴露其决策（chat vs task）和理由；Planner暴露其分解结构；Reviewer暴露其审查意见。用户始终可以理解系统为什么做了它所做的——在高级自主系统中这一属性往往被省略。</p>
+
+<h3>2.3 从人类智慧到Agent架构：四步设计流程</h3>
+<p>Janus的每个架构决策都遵循一个四步流程，而非凭空发明：</p>
+<ol>
+  <li><strong>找到人类对应物。</strong>问："这个问题在人类组织中是什么样的？"映射到军事、政府、企业、司法、制造业或学术实践。</li>
+  <li><strong>提取核心机制。</strong>剥去制度性支架（不需要军事法庭或人力资源部）。只保留直接影响决策质量或执行可靠性的机制。</li>
+  <li><strong>映射到Janus角色和协议。</strong>将人类概念转化为具体的数据结构或方法。例如：指挥官意图→TaskSpec.intent；监察长→Reviewer；行动后报告→ExecutionReport。</li>
+  <li><strong>最小化实施。</strong>只添加当前系统明确需要的东西。多Planner并行、资源仲裁和跨Worker协商推迟到这些问题实际出现时再做。</li>
+</ol>
+<p>这是一种设计方法论，不是类比。Janus中的每一个结构性决策——从五级审查裁决到上下文纪律提示词——都可以追溯到经过研究、提取和映射的具体人类实践。</p>
+
+<h2>3. Janus 架构</h2>
+
+<h3>3.1 系统总览</h3>
+
+<div class="arch-diagram">
+                    User
+                      |
+            Session (历史记录 + 透传)
+                      |
+                ┌─ Gatekeeper ─┐
+                │  战略层       │
+                │  零工具       │
+                │  模型：推理    │
+                └──────┬────────┘
+                   Directive
+                       |
+                ┌─ Planner ────┐
+                │  战术层       │
+                │  零工具       │
+                │  模型：快速    │
+                └──────┬────────┘
+              ┌────────┼────────┐
+           Worker0  Worker1  WorkerN
+           (有工具)  (有工具)  (有工具)
+              └────────┼────────┘
+                       |
+                ┌─ Reviewer ───┐
+                │  独立审计     │
+                │  零工具       │
+                └──────────────┘
+</div>
+<p style="text-align:center;font-size:14px;color:#666;">图1：Janus四角色架构。仅Worker有工具访问权；Gatekeeper、Planner和Reviewer通过纯LLM推理操作。</p>
+
+<h3>3.2 Gatekeeper：战略决策层</h3>
+<p>Gatekeeper（973行，<code>core/gatekeeper.py</code>）是所有用户输入的单一入口。其设计受一条硬约束支配：零工具。Gatekeeper不能读文件、写文件、执行命令或搜索网络。它完全通过LLM调用来推理。</p>
+
+<p><strong>决策路由（_decide）</strong>：将每条用户消息分类为chat（简单对话）或task（需要Planner分解）。API失败默认走task路线（宁可试图分解后优雅失败，也不能默默将复杂请求当作闲聊）。</p>
+
+<p><strong>指令制定（_formulate_directive）</strong>：当动作是task时，将用户目标转化为Directive对象，包含三个字段：intent（战略方向）、constraints（不可违反的硬约束）、priority（速度/质量/平衡）。<code>user_goal</code>字段原封不动保存用户原始输入——它永远不会被任何LLM调用修改——作为系统的不可变锚点。</p>
+
+<p><strong>恢复循环</strong>：如果Planner返回带有失败任务的ExecutionReport，Gatekeeper进入结构化恢复循环（最多2次尝试）：① 诊断（_diagnose_failures）→ ② 重构策略（_reformulate_for_recovery）→ ③ 重新执行 → ④ 合并报告（_merge_reports）。这对应企业的绩效改进计划（PIP）模式。</p>
+
+<p><strong>交付验证</strong>：在格式化面向用户的最终输出之前，Gatekeeper运行_validate_delivery——一次LLM调用，询问："输出是否真正回答了用户请求？"而不是"输出是否满足技术规范？"</p>
+
+<h3>3.3 Planner：战术分解层</h3>
+<p>Planner接收Gatekeeper的Directive并分解为TaskSpec数组——每个Worker任务的精确规范。与Gatekeeper一样，Planner也不能访问任何工具——它将任务分配给Worker，但自己永远不执行。</p>
+
+<p>每个TaskSpec包含明确的验收标准，标记为[HARD]或[SOFT]：[HARD]标准必须以零容忍度满足（类比司法审查的"重新审查"标准）；[SOFT]标准仅在存在明显错误时才阻止通过（"明显错误"标准）。这确保系统不会因为变量命名风格问题而浪费重试周期。</p>
+
+<p>优先级驱动的重试预算：Planner将Directive的priority字段映射为具体预算——speed/urgent（0次重试，快速失败）、balanced/normal（最多2次）、quality（最多3次）。</p>
+
+<p>分级重试策略（_dispatch_with_review）：根据Reviewer裁决决定重试行为——批准/附注批准（立即接受）、小幅修改（重试1次后自动接受）、大幅修改（最多2次，每次重新审查）、驳回（最多2次，然后失败）。</p>
+
+<p>桌面检查（_desk_check）：在将任何Worker结果发送给Reviewer之前，Planner运行零成本启发式规则——标记空结果、仅文件路径、列出产物但未检查——完全无需LLM调用。</p>
+
+<h3>3.4 Worker：执行引擎</h3>
+<p>Worker是唯一具有工具访问权限的角色。它接收TaskSpec，通过ReAct循环（思考→行动→观察）执行，并返回结果。每个Worker在启动时接收一个任务，循环运行直到任务完成或用尽工具调用预算（默认50次）。</p>
+
+<p><strong>工具系统：</strong>默认注册表（create_default_registry）包含九个工具——read_file（分页读取）、write_file（自动创建父目录）、terminal（subprocess执行，60秒超时）、web_search（占位符）、web_extract（HTTP GET + HTML剥离）、search_files（glob + 内容搜索）、patch（查找替换）、execute_code（沙盒Python exec）、browser_navigate（占位符）。参数别名系统将LLM偏好的参数名映射到规范函数签名。</p>
+
+<p><strong>自行分解：</strong>当Worker在执行中判断任务过于复杂无法一次完成时，LLM可以返回status="needs_decomposition"，包含子任务。Worker递归执行每个子任务（由max_depth限制），将子结果反馈为上下文，然后恢复原任务。</p>
+
+<h3>3.5 Reviewer：独立审计层</h3>
+<p>Reviewer是零工具角色，只接收Worker产出并返回结构化审查结果。关键设计：<strong>审查提示词不包括Worker的对话历史或工具调用序列。</strong>Reviewer只看到输入（TaskSpec）和输出（结果），确保审查基于结果而非过程——正如同行评审员评判手稿而非作者的写作方法。</p>
+
+<p>Reviewer还预加载Worker创建的文件（在文件写入后，将内容注入提示词），使得对代码质量、结构和正确性的有根据的审查成为可能。</p>
+
+<p><strong>五级审查裁决：</strong>APPROVED（完全满足）→ APPROVED_WITH_NOTES（全部[HARD]满足，仅[SOFT]建议）→ MINOR_REVISIONS（小问题，特别是仅[SOFT]）→ MAJOR_REVISIONS（一个或多个[HARD]未满足）→ REJECTED（核心[HARD]标准违反）。这直接映射到学术同行评审。</p>
+
+<p><strong>四级严重度：</strong>CRITICAL（致命—产出完全不可用）→ MAJOR（严重—核心需求未满足）→ MINOR（中等—部分偏离，产出可用）→ SUGGESTION（优化建议—永不妨碍通过）。这映射到制造业缺陷分类。</p>
+
+<h3>3.6 层间通信协议</h3>
+<p>层间通信由四个主要数据结构管理（core/protocol.py，256行）：</p>
+<ul>
+  <li><strong>Directive</strong>（Gatekeeper → Planner）：goal、user_goal（不可变）、intent、constraints、priority。</li>
+  <li><strong>TaskSpec</strong>（Planner → Worker）：task_id、description、acceptance_criteria（含[HARD]/[SOFT]标记）、user_goal。</li>
+  <li><strong>TaskResult</strong>（Worker → Planner）：result、status（SUCCESS/NEEDS_DECOMPOSITION/FAILURE/CRASH）、artifacts。</li>
+  <li><strong>ExecutionReport</strong>（Planner → Gatekeeper）：all_task_results、recovery_attempts、summary。</li>
+</ul>
+
+<h3>3.7 记忆与状态</h3>
+<ul>
+  <li><strong>Session</strong>（125行）：记录用户/助手消息对（最多100个轮次对）的薄透传层，为Gatekeeper决策提供上下文。</li>
+  <li><strong>TaskManager</strong>（220行）：跟踪每个任务从PENDING→RUNNING→COMPLETED/FAILED的有限状态机。</li>
+  <li><strong>Console</strong>（466行）：被动观察者，用中文文本、emoji和ANSI颜色格式化显示事件。</li>
+</ul>
+
+<h2>4. 关键机制</h2>
+
+<h3>4.1 任务分解：Gatekeeper Tree</h3>
+<p>Janus的分解策略是递归树而非扁平列表。Gatekeeper制定Directive；Planner分解为TaskSpec数组；Worker可以在执行中进一步自行分解。每次分解时depth递增，depth≥max_depth（默认3）时禁止自行分解。这防止了LLM的经典故障模式——将任务无限细分为无意义子任务来回避执行。</p>
+
+<h3>4.2 质量审计管道</h3>
+<p>Janus的质量保证遵循制造业三级检验模型：</p>
+<ul>
+  <li><strong>来料检验（IQC）</strong>——桌面检查：Worker结果被Planner的_desk_check预筛查，零成本拦截明显错误的输出。</li>
+  <li><strong>过程检验（IPQC）</strong>——Reviewer审查：独立LLM根据结构化[HARD]/[SOFT]标准评估每个Worker结果。</li>
+  <li><strong>出厂检验（OQC）</strong>——交付验证：Gatekeeper的_validate_delivery确认最终组装输出满足原始用户请求。</li>
+</ul>
+<p>这与大多数Agent框架的"Worker调用LLM→返回结果→显示给用户"形成鲜明对比，后者根本没有质量检查。</p>
+
+<h3>4.3 意图保全闭环</h3>
+<p>意图漂移——用户原始请求在多LLM调用中逐步变异——是多Agent系统中被充分记录的故障模式。Janus通过双重机制应对：</p>
+<ol>
+  <li><strong>user_goal锚点：</strong>用户输入进入Gatekeeper的那一刻，被存储为Directive中的user_goal。此字段永不被修改。它传播到每个TaskSpec和每个Worker，并出现在Worker的系统提示词中。Reviewer提示词也包含user_goal，明确指示："确认输出是用户真正想要的，而不仅仅是满足验收标准的。"</li>
+  <li><strong>交付验证：</strong>在格式化最终输出之前，_validate_delivery向LLM提问："用户原始请求：{user_goal}。我们产出了：{report_summary}。此输出是否真正回答了用户的请求？"</li>
+</ol>
+<p>这一机制是在真实事故之后添加的——Planner的无条件工作目录注入导致Worker分析了错误项目，但直到输出呈现给用户前才被发现。user_goal锚点和交付前验证现在在错误输出呈现给用户之前捕获此类漂移。</p>
+
+<h3>4.4 自愈闭环</h3>
+<p>Janus的自愈结合了三个不同架构层面的反馈循环：</p>
+<ol>
+  <li><strong>Worker级重试</strong>（Planner→Reviewer→Worker）：审核驱动的修正，附带结构化反馈和裁决感知的重试上限。</li>
+  <li><strong>Planner级恢复</strong>（Gatekeeper→Planner）：当多个Worker失败时，Gatekeeper诊断模式性失败（例如，Planner是否系统性地设定了不可能的标准？），重构Directive，并让Planner——可能使用不同策略——重新分解。</li>
+  <li><strong>Gatekeeper级恢复</strong>：完整的四步PIP循环（诊断→重构→重试→合并），最多2次尝试。</li>
+</ol>
+<p>关键哲学是：<strong>重试不能只是重复同一件事。</strong>每一次恢复尝试必须基于前一次失败的结构化诊断来修改方法。</p>
+
+<h3>4.5 桌面检查：零成本预筛查</h3>
+<p>桌面检查（_desk_check，planner.py:944-998）是一组启发式规则，在Reviewer昂贵的LLM调用之前运行：Worker返回空结果、返回的文件路径无法解析、返回看似只列出产物但未实际检查的结果。如果触发，桌面检查警告会附在Reviewer提示词上（"已在发货前标记[警告]：可能需要人工检查"），提示词要求更严格的审查。检查不阻止执行——它只是将Reviewer的注意力集中在可疑产出上。</p>
+
+<h2>5. 与现有框架的对比</h2>
+
+<table>
+<tr><th>维度</th><th>Janus</th><th>LangGraph</th><th>AutoGen</th><th>CrewAI</th><th>MetaGPT</th></tr>
+<tr>
+  <td><strong>架构模式</strong></td>
+  <td>分层树（4个固定角色）</td>
+  <td>有向图（节点+边）</td>
+  <td>对话式（Agent间消息）</td>
+  <td>角色团队（扁平）</td>
+  <td>角色流水线</td>
+</tr>
+<tr>
+  <td><strong>工具访问控制</strong></td>
+  <td>硬性：仅Worker有工具</td>
+  <td>任何节点可有工具</td>
+  <td>任何Agent可有工具</td>
+  <td>任何Agent可有工具</td>
+  <td>任何Agent可有工具</td>
+</tr>
+<tr>
+  <td><strong>质量审查</strong></td>
+  <td>独立Reviewer，五级裁决，四级严重度</td>
+  <td>手动（用户写检查节点）</td>
+  <td>无内置</td>
+  <td>无内置</td>
+  <td>代码审查角色（二元）</td>
+</tr>
+<tr>
+  <td><strong>自愈机制</strong></td>
+  <td>三层闭环</td>
+  <td>条件边（显式重试路径）</td>
+  <td>通过群聊手动重试</td>
+  <td>无内置</td>
+  <td>无内置</td>
+</tr>
+<tr>
+  <td><strong>意图保全</strong></td>
+  <td>user_goal锚点+交付验证</td>
+  <td>无</td>
+  <td>无</td>
+  <td>无</td>
+  <td>无</td>
+</tr>
+<tr>
+  <td><strong>信息视野</strong></td>
+  <td>分层：每个角色只看到其层数据</td>
+  <td>全量：所有节点共享状态图</td>
+  <td>全量：所有Agent在群聊中</td>
+  <td>全量：共享任务上下文</td>
+  <td>流程共享工作空间</td>
+</tr>
+<tr>
+  <td><strong>设计哲学</strong></td>
+  <td>人类组织管理</td>
+  <td>工作流图（Airflow/DAG）</td>
+  <td>多Agent对话</td>
+  <td>角色团队模拟</td>
+  <td>公司SOP模拟</td>
+</tr>
+</table>
+
+<p><strong>关键差距分析：</strong></p>
+<p><strong>质量差距：</strong>LangGraph、AutoGen、CrewAI和MetaGPT都依赖开发者自行实现审查逻辑。Janus提供开箱即用的五级分级审查系统，具有四级缺陷严重度、产物预加载检查、桌面检查预筛查和针对过度严苛审查者的裁决调整。</p>
+<p><strong>哲学差距：</strong>Janus是唯一一个架构源自人类组织设计模式而非分布式系统或工作流隐喻的框架。这产生了质上不同的设计选择：信息视野被有意识收窄而非拓宽，角色具有硬性工具访问约束而非建议性的，重试被构建为绩效改进计划而非简单重新运行。CrewAI共享了基于角色的直觉但将角色建模为扁平对等体；MetaGPT模拟公司流程但缺少分层信息访问和质量门控。</p>
+
+<h2>6. 评估</h2>
+
+<div class="note">
+<strong>说明：</strong>以下内容描述了Janus设计的评估框架和开发中的定性观察。严格的定量基准测试（在标准化Agent框架评测集上）已列为未来工作。本节的数据不应被解释为具有统计显著性的测量结果。
+</div>
+
+<h3>6.1 实验设置</h3>
+<p>所有实验使用DeepSeek API，模型分配如下：Gatekeeper使用deepseek-v4-pro（推理模型，开启思考模式），Planner和Worker使用deepseek-v4-flash（更快模型），Reviewer共享Gatekeeper的模型以确保审计质量。max_depth=3，每Worker最大工具调用数=50。</p>
+
+<h3>6.2 设计的评估类别</h3>
+<p>我们设计了三类任务的评估框架，分别考验框架的分解、执行、审查和自愈能力：</p>
+<ul>
+  <li><strong>代码生成：</strong>要求Worker从自然语言规范产出正确的、结构良好的代码模块。</li>
+  <li><strong>代码分析：</strong>要求Worker分析现有代码库的特定属性——考验工具使用能力和审核验证能力。</li>
+  <li><strong>项目脚手架：</strong>多文件、多步骤任务，考验Planner的分解质量和Gatekeeper的恢复循环。</li>
+</ul>
+
+<h3>6.3 定性观察</h3>
+<p>开发过程中的非正式测试揭示了几个与Janus架构设计一致的模式：</p>
+<ul>
+  <li><strong>分级裁决避免不必要的重试：</strong>被标记为MINOR_REVISIONS（仅SOFT标准违反）的任务通常在一次轻量级重试中通过，额外成本极低。</li>
+  <li><strong>意图保全捕获规范漂移：</strong>在一次事故中，Planner的无条件工作目录注入导致Worker分析了错误项目——交付验证步骤在用户看到错误输出之前就捕获了此问题。</li>
+  <li><strong>恢复循环在策略性失败上成功：</strong>当失败源于错误的分解策略或不完整的验收标准时，恢复循环成功；当失败源于工具能力缺失时（如网络搜索占位符），恢复循环失败。</li>
+  <li><strong>桌面检查提供零成本价值：</strong>桌面检查预筛查层在约八分之一的Worker输出上标记了本会浪费Reviewer时间的问题。</li>
+</ul>
+
+<h3>6.4 端到端案例研究</h3>
+<p>以下展示一个完整的多步任务全流程追踪——任务为："写一个Python函数，读取CSV文件，按指定列排序行，将排序结果写入新文件。"</p>
+
+<div class="case">
+<p><strong>阶段1：战略决策。</strong>Gatekeeper的_decide调用返回{action: "task"}，_formulate_directive产出："intent: 创建可复用的CSV排序Python工具，带命令行接口；constraints: 必须优雅处理缺失列、空文件和编码问题；priority: quality"。<code>user_goal</code>保存为用户的确切输入字符串。</p>
+
+<p><strong>阶段2：战术分解。</strong>Planner分解为三个TaskSpec：① "创建CSV排序核心函数" [HARD]接受文件名/列名/输出文件名参数，排序正确 [SOFT]含类型注解和文档字符串 ② "用argparse编写命令行入口" [HARD]接受--input/--column/--output参数，--help打印用法 ③ "创建测试CSV文件并验证端到端" [HARD]创建已知数据CSV，运行脚本验证输出排序正确，测试错误情况（缺失列）。</p>
+
+<p><strong>阶段3：Worker执行与审查。</strong>Worker-0（任务1）：创建csv_sorter.py。Reviewer发现一个MINOR_REVISIONS问题——默认区分大小写排序，添加case_sensitive参数后通过。Worker-1（任务2）：追加CLI代码，Reviewer发现[HARD]违反——--help未实现，裁定MAJOR_REVISIONS，两次重试后通过。Worker-2（任务3）：创建测试数据，运行脚本验证，全部三个测试场景通过，裁定APPROVED。</p>
+
+<p><strong>阶段4：交付验证。</strong>Gatekeeper的_validate_delivery收到ExecutionReport（3任务，3通过），对照原始user_goal确认输出匹配用户请求。</p>
+
+<p><strong>阶段5：用户输出。</strong>产出："已完成·3/3任务：task-1创建排序核心函数、task-2添加CLI入口、task-3创建测试数据并验证端到端。"</p>
+</div>
+
+<p>此案例展示了每一个主要机制：战略制定、带[HARD]/[SOFT]标准的战术分解、分级审查加重试、以及对照原始用户意图的交付验证。</p>
+
+<h2>7. 讨论</h2>
+
+<h3>7.1 当前局限</h3>
+<ul>
+  <li><strong>串行Worker执行：</strong>当前实现串行运行Worker，即使TaskSpec在逻辑上是独立的。并行化将减少总延迟，但需要对TaskManager状态进行线程安全改造。</li>
+  <li><strong>工具占位符：</strong>九个注册工具中有两个（web_search和browser_navigate）是占位符，无可工作的后端实现。</li>
+  <li><strong>无跨会话持久记忆：</strong>Session仅在内存中存储对话历史；重启进程丢失所有上下文。</li>
+  <li><strong>实证评估范围：</strong>严格的定量评估已留待未来工作。第6节的定性观察提供方向性证据，但不应被解释为具有统计显著性的测量。</li>
+  <li><strong>分层审查的成本：</strong>每个Worker产出都产生额外的Reviewer LLM调用。对简单任务，此开销可能超过Worker执行本身的成本。</li>
+</ul>
+
+<h3>7.2 适用边界</h3>
+<p>Janus适用于正确性优先于延迟、存在分解结构的任务。擅长：多步软件工程（代码生成/分析/重构）、具有结构要求的文档生成、具有可验证产出的数据处理管道、需要对每个子步骤进行独立验证的任务。不太适合：延迟敏感的实时应用、没有明确"正确"输出的创意/开放式任务、适合单次LLM调用的单步查询。</p>
+
+<h3>7.3 未来方向</h3>
+<ul>
+  <li><strong>多Planner并行：</strong>当Directive分解为独立子目标时，多个Planner实例可并发运行。</li>
+  <li><strong>跨Worker通信：</strong>允许Worker交换中间结果而不经过Planner（类比微服务架构中的服务间通信）。</li>
+  <li><strong>持久会话记忆：</strong>磁盘支撑的会话持久化用于长期运行项目。</li>
+  <li><strong>标准化评测：</strong>用于分层Agent框架的SWE-bench等效评测集。</li>
+  <li><strong>多LLM提供商支持：</strong>将异构模型分配扩展到DeepSeek之外（Anthropic、Groq、通过Ollama的本地模型）。</li>
+</ul>
+
+<h2>8. 相关工作</h2>
+
+<h3>8.1 基于LLM的Agent</h3>
+<p>ReAct范式将推理（思维、工具选择）与行动（工具调用）和观察（结果处理）交织在一起——Janus的Worker循环是此模式的直接继承者，扩展了自行分解和结构化审查。Tool-augmented LLM（Toolformer、Gorilla）证明了LLM可以通过API文档学习使用外部工具；WebGPT和Open Interpreter在受限领域展示了实用工具使用。Janus在这些基础上添加了"哪些角色有工具访问权"的架构约束。</p>
+
+<h3>8.2 多Agent系统</h3>
+<p>LangGraph将Agent工作流建模为带条件边的有向图——其通用性意味着Janus的Gatekeeper Tree可以表达为LangGraph，但缺少Janus的内置质量机制。AutoGen（微软）在群聊模式中组织Agent——优势是灵活的多Agent对话，差距在于缺少结构化质量关卡或信息视野强制。CrewAI将Agent分配为团队中的角色——共享了基于角色设计的直觉，但将角色建模为扁平对等体。MetaGPT模拟软件公司的标准操作程序——共享了分层工作流的直觉，但缺少信息访问控制和结构化审查。</p>
+
+<h3>8.3 任务分解</h3>
+<p>思维树（Tree of Thoughts）引入了通过搜索树的显式推理分支，而思维图（Graph of Thoughts）推广到任意图拓扑。HuggingGPT展示了基于任务规划的动态工具选择。Janus的Gatekeeper Tree与这些不同之处在于：分解是结构化的（而非探索性的），由固定角色执行（而非单一LLM），并内嵌了质量验证。</p>
+
+<h3>8.4 AI系统中的质量保证</h3>
+<p>Constitutional AI通过AI反馈进行对齐——其"让AI评判AI"的直觉与Janus的Reviewer共享，但应用于单次推理而非多Agent工作流。Guardrails AI为LLM输出添加了结构、类型和质量保证——以输出验证为中心，而Janus将质量保证嵌入到架构中（独立角色、全链路审查）。</p>
+
+<h2>9. 结论</h2>
+
+<p>Janus证明了<strong>架构约束——零工具角色、分层信息视野、分级审查裁决和不可变意图锚点——能够产生比宽松架构（每个Agent看到一切、审查是可选的）更可靠的Agent行为。</strong></p>
+<p>框架的三项核心创新——五级分级审查体系、全链路意图保全闭环和结构化自愈闭环——以约5,600行Python实现，作为开源软件发布。开发中的定性观察表明，Janus的分层信息视野防止了规范漂移，分级裁决体系避免了因装饰性问题而产生的不必要重试，恢复循环在简单重试策略之上增加了有意义的容错能力。</p>
+<p>Janus不是通用Agent框架的替代品。它是一个专门化架构，适用于正确性至关重要、分解结构存在、分层审查成本与未检测错误成本相称的任务。对此类任务而言，Janus的核心洞察——<strong>Agent架构应该镜像人类组织设计，而非分布式系统设计</strong>——提供了一条通往更可靠、更可审计、更值得信赖的AI Agent的道路。</p>
+
+<h2>参考文献</h2>
+<ol style="font-size:14px;">
+  <li>LangChain. "LangGraph: Build stateful, multi-actor applications with LLMs." GitHub, 2024.</li>
+  <li>Wu Q. et al. "AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation." arXiv:2308.08155, 2023.</li>
+  <li>CrewAI. "CrewAI: Framework for orchestrating role-playing autonomous AI agents." GitHub, 2024.</li>
+  <li>Hong S. et al. "MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework." arXiv:2308.00352, 2023.</li>
+  <li>Yao S. et al. "ReAct: Synergizing Reasoning and Acting in Language Models." arXiv:2210.03629, 2022.</li>
+  <li>Schick T. et al. "Toolformer: Language Models Can Teach Themselves to Use Tools." arXiv:2302.04761, 2023.</li>
+  <li>Patil S. et al. "Gorilla: Large Language Model Connected with Massive APIs." arXiv:2305.15334, 2023.</li>
+  <li>Nakano R. et al. "WebGPT: Browser-assisted question-answering with human feedback." arXiv:2112.09332, 2021.</li>
+  <li>Yao S. et al. "Tree of Thoughts: Deliberate Problem Solving with Large Language Models." arXiv:2305.10601, 2023.</li>
+  <li>Besta M. et al. "Graph of Thoughts: Solving Elaborate Problems with Large Language Models." arXiv:2308.09687, 2023.</li>
+  <li>Shen Y. et al. "HuggingGPT: Solving AI Tasks with ChatGPT and its Friends in Hugging Face." arXiv:2303.17580, 2023.</li>
+  <li>Bai Y. et al. "Constitutional AI: Harmlessness from AI Feedback." arXiv:2212.08073, 2022.</li>
+  <li>Guardrails AI. "Guardrails: Add structure, type and quality guarantees to LLM outputs." GitHub, 2024.</li>
+</ol>
+
+<div class="note">
+<p><strong>注意：</strong>本文档为英文白皮书的中文译本，用于作者自审。正式版本（用于arXiv预印本）为英文LaTeX版：<code>janus/paper/janus_whitepaper.pdf</code>。</p>
+</div>
+
+</body>
+</html>
