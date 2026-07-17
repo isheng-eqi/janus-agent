@@ -37,6 +37,8 @@ import sys
 import unicodedata
 from typing import Optional
 
+from core._unicode import Symbols
+
 # Fix ANSI escape code rendering on Windows (cmd, PowerShell, etc.)
 # Git Bash usually handles ANSI natively, but this ensures it works everywhere.
 import colorama
@@ -238,7 +240,7 @@ class Console:
         # 阴——与前文呼吸隔离
         print()
         # 阳——青花标题
-        print(_qing(f"分析完成 | {n_tasks} 个子任务"))
+        print(_qing(f"{Symbols.PHASE_DECOMPOSE} | {n_tasks} 个子任务"))
         # 阴——标题与列表之间留白
         print()
         print(tasks_summary)
@@ -259,12 +261,12 @@ class Console:
             return
         # 阴——与前文呼吸隔离
         print()
-        # Build header: "┌─ 实现阶乘函数 ──────────────────┐"
-        header = f"\u250c\u2500 {description} "
+        # Build header: e.g. "+- Implement factorial -----------+"
+        header = f"{Symbols.TOP_L}{Symbols.HLINE} {description} "
         header_width = _display_width(header)
         target = max(40, min(90, header_width + 10))
         padding = max(0, target - header_width - 1)
-        header_line = f"{_qing(header)}{_qing('\u2500' * padding)}\u2510"
+        header_line = f"{_qing(header)}{_qing(Symbols.HLINE * padding)}{Symbols.TOP_R}"
         self._box_width = target - 2
         print(header_line)
 
@@ -281,17 +283,17 @@ class Console:
         if self.is_quiet:
             return
         if status == "success":
-            status_cn = "完成"
+            status_cn = Symbols.STATUS_DONE
             status_color = _jin
         elif status == "needs_decomposition":
-            status_cn = "需分解"
+            status_cn = Symbols.STATUS_DECOMP
             status_color = _qing
         else:
-            status_cn = "未完成"
+            status_cn = Symbols.STATUS_FAIL
             status_color = _zhu
         # 淡墨——耗时
-        print(f"│  {_danmo(f'⏱ {elapsed:.1f}s')}")
-        print(f"└{'─' * self._box_width}┘")
+        print(f"{Symbols.VLINE}  {_danmo(f'{Symbols.CLOCK} {elapsed:.1f}s')}")
+        print(f"{Symbols.BOT_L}{Symbols.HLINE * self._box_width}{Symbols.BOT_R}")
         # 空行（阴）——框与状态之间留呼吸
         print()
         print(f"  {status_color(status_cn)}")
@@ -307,9 +309,9 @@ class Console:
         """
         if self.is_quiet:
             return
-        label = _TOOL_LABELS.get(tool_name, f"调用工具: {tool_name}")
+        label = Symbols.label(tool_name)
         # 动作动词（默认色）+ 淡墨路径 —— 浓淡对比
-        print(f"│  {label}: {_danmo(summary)}")
+        print(f"{Symbols.VLINE}  {label}: {_danmo(summary)}")
 
     def tool_call_verbose(
         self, tool_name: str, arguments: dict
@@ -325,8 +327,8 @@ class Console:
         """
         if not self.is_verbose:
             return
-        label = _TOOL_LABELS.get(tool_name, tool_name)
-        print(f"│     └─ 完整参数: {arguments}")
+        label = Symbols.label(tool_name)
+        print(f"{Symbols.VLINE}     {Symbols.BOT_L}{Symbols.HLINE} 完整参数: {arguments}")
 
     # -- L2: Review -----------------------------------------------------------
 
@@ -340,15 +342,15 @@ class Console:
         """
         if self.is_quiet:
             return
-        print(f"│  {_jin('通过')}")
+        print(f"{Symbols.VLINE}  {_jin(Symbols.REVIEW_PASS)}")
         if evidence:
             for line in evidence.strip().split("\n")[:5]:
                 stripped = line.strip()
                 if stripped:
-                    print(f"│     ✓ {stripped}")
+                    print(f"{Symbols.VLINE}     {Symbols.CHECK} {stripped}")
             remaining = len(evidence.strip().split("\n")) - 5
             if remaining > 0:
-                print(f"│     ... 还有 {remaining} 项")
+                print(f"{Symbols.VLINE}     ... 还有 {remaining} 项")
 
     def review_fail(
         self, task_id: str, issues: list[str], attempt: int
@@ -365,13 +367,13 @@ class Console:
             return
         retry_n = attempt + 1
         # 朱砂——未通过（刚而不厉）
-        print(f"│  {_zhu('未通过')}")
+        print(f"{Symbols.VLINE}  {_zhu(Symbols.REVIEW_FAIL)}")
         for issue in issues[:5]:
-            print(f"│     ✗ {issue}")
+            print(f"{Symbols.VLINE}     {Symbols.CROSS} {issue}")
         if len(issues) > 5:
-            print(f"│     ... 还有 {len(issues) - 5} 个问题")
+            print(f"{Symbols.VLINE}     {Symbols.ELLIP} 还有 {len(issues) - 5} 个问题")
         # 金——行动建议独立成行
-        print(f"│  {_jin(f'→ 第 {retry_n} 次重试')}")
+        print(f"{Symbols.VLINE}  {_jin(f'{Symbols.ARROW} 第 {retry_n} 次重试')}")
 
     # -- L2: Errors -----------------------------------------------------------
 
@@ -471,16 +473,16 @@ class Console:
             return
 
         if failed == 0:
-            line = f"  {_jin(f'{passed}/{total}')} {_nongmo('完成')}"
+            line = f"  {_jin(f'{passed}/{total}')} {_nongmo(Symbols.STATUS_DONE)}"
         elif passed == 0:
-            line = f"  {_zhu(f'{failed}/{total}')} {_nongmo(_zhu('未完成'))}"
+            line = f"  {_zhu(f'{failed}/{total}')} {_nongmo(_zhu(Symbols.STATUS_FAIL))}"
         else:
-            line = (f"  {_jin(str(passed))} {_nongmo('完成')}  "
-                    f"{_zhu(str(failed))} {_nongmo(_zhu('未完成'))}")
+            line = (f"  {_jin(str(passed))} {_nongmo(Symbols.STATUS_DONE)}  "
+                    f"{_zhu(str(failed))} {_nongmo(_zhu(Symbols.STATUS_FAIL))}")
 
         # 阴——与上面的输出呼吸隔离
         print()
-        print(f"{'─' * 20} 汇总 {'─' * 20}")
+        print(f"{Symbols.HLINE * 20} {Symbols.SUMMARY} {Symbols.HLINE * 20}")
         print(line)
 
     # -- Convenience ----------------------------------------------------------
