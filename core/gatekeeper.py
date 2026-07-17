@@ -887,6 +887,7 @@ Output ONLY valid JSON."""
             failed_details=merged_failed_details,
             goal=old.goal or new.goal,
             constraints=old.constraints or new.constraints,
+            has_retry_exhausted=old.has_retry_exhausted or new.has_retry_exhausted,  # L3-9
         )
 
     # -- internal: delivery validation ----------------------------------------
