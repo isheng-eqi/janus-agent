@@ -490,19 +490,54 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
         schemas = self._registry.get_openai_schemas()
 
         tool_call_count = 0
+        _artifacts_created: list[str] = []  # track files created during execution
+
+        _API_MAX_RETRIES = 3
+        _API_RETRY_DELAY = 2.0  # seconds, doubles each retry
+
         while tool_call_count < self._max_tool_calls:
-            try:
-                response = self._client.chat.completions.create(
-                    model=self._model,
-                    messages=messages,
-                    tools=schemas if schemas else None,  # type: ignore[arg-type]
-                    tool_choice="auto" if schemas else None,
-                )
-            except Exception as exc:
+            api_attempt = 0
+            response = None
+            last_api_error = None
+
+            while api_attempt <= _API_MAX_RETRIES:
+                try:
+                    response = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=messages,
+                        tools=schemas if schemas else None,
+                        tool_choice="auto" if schemas else None,
+                    )
+                    break  # success
+                except Exception as exc:
+                    last_api_error = exc
+                    api_attempt += 1
+                    if api_attempt <= _API_MAX_RETRIES:
+                        delay = _API_RETRY_DELAY * (2 ** (api_attempt - 1))
+                        logger.warning(
+                            "Worker API call failed (attempt %d/%d), "
+                            "retrying in %.1fs: %s",
+                            api_attempt, _API_MAX_RETRIES, delay, exc,
+                        )
+                        import time as _time
+                        _time.sleep(delay)
+                    else:
+                        return TaskResult(
+                            status=TaskStatus.FAILURE,
+                            summary=(
+                                f"LLM API call failed after "
+                                f"{_API_MAX_RETRIES} retries: "
+                                f"{type(last_api_error).__name__}"
+                            ),
+                            result=str(last_api_error),
+                            confidence=Confidence.LOW,
+                        )
+
+            if response is None:
                 return TaskResult(
                     status=TaskStatus.FAILURE,
-                    summary=f"LLM API call failed: {type(exc).__name__}",
-                    result=str(exc),
+                    summary="LLM API call failed: all retries exhausted.",
+                    result=str(last_api_error),
                     confidence=Confidence.LOW,
                 )
 
@@ -559,6 +594,10 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                         tc.function.name, arguments
                     )
 
+                    # Track artifacts for budget-exhaustion preservation
+                    if tc.function.name == "write_file" and "path" in arguments:
+                        _artifacts_created.append(arguments["path"])
+
                     # ── console: tool call summary ────────────────────
                     if self.console:
                         summary = self.console.build_tool_summary(
@@ -588,13 +627,22 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
             break
 
         # Exhausted tool-call budget without a text result
+        budget_note = ""
+        if _artifacts_created:
+            budget_note = (
+                f"\n[BUDGET-EXHAUSTED: {len(_artifacts_created)} file(s) were "
+                f"created before exhaustion: {', '.join(_artifacts_created[:5])}"
+                f"{'...' if len(_artifacts_created) > 5 else ''}]"
+            )
         return TaskResult(
             status=TaskStatus.FAILURE,
             summary="Worker loop exhausted tool-call budget without completing the task.",
             result=(
                 f"Reached max_tool_calls={self._max_tool_calls} "
                 "without receiving a final text response from the LLM."
+                f"{budget_note}"
             ),
+            artifacts=_artifacts_created,
             confidence=Confidence.LOW,
         )
 
@@ -746,6 +794,7 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                         ),
                         intent=spec.intent,
                         goal=spec.goal,
+                        user_goal=spec.user_goal,
                         constraints=spec.constraints,
                         depth=spec.depth,
                     )
@@ -793,6 +842,7 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                     ),
                     intent=spec.intent,
                     goal=spec.goal,
+                    user_goal=spec.user_goal,
                     constraints=spec.constraints,
                     depth=spec.depth,
                 )
@@ -865,6 +915,13 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
         if isinstance(parsed, dict):
             try:
                 result = TaskResult.from_dict(parsed)
+                # Defensive: LLM may return nested JSON where "result" is a
+                # dict/list instead of a string.  Normalize to str so callers
+                # (Planner._desk_check, Reviewer, etc.) never get a type error.
+                if not isinstance(result.result, str):
+                    result.result = json.dumps(
+                        result.result, ensure_ascii=False
+                    )
                 if not result.validate():
                     return TaskResult(
                         status=TaskStatus.FAILURE,
@@ -1202,7 +1259,8 @@ def _real_execute_code(code: str) -> str:
     import builtins as _safe_builtins
 
     # Build a restricted builtins dict: only safe, side-effect-free functions.
-    # Exclude dunders (__import__, __build_class__, etc.) and dangerous builtins.
+    # Include __import__ so execute_code can load stdlib modules (json, re, math, etc.).
+    # Exclude exec, eval, compile, open, and input for security.
     _ALLOWED_BUILTINS = {
         "abs", "all", "any", "ascii", "bin", "bool", "bytes", "callable",
         "chr", "complex", "dict", "divmod", "enumerate", "filter", "float",
@@ -1211,6 +1269,8 @@ def _real_execute_code(code: str) -> str:
         "min", "next", "object", "oct", "ord", "pow", "print", "range",
         "repr", "reversed", "round", "set", "slice", "sorted", "str",
         "sum", "tuple", "type", "zip",
+        # Allow imports of stdlib modules (json, re, math, etc.)
+        "__import__",
         # Allow common exceptions/types
         "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
         "AttributeError", "RuntimeError", "StopIteration", "ImportError",
@@ -1230,7 +1290,14 @@ def _real_execute_code(code: str) -> str:
     try:
         exec(code, {"__builtins__": safe_builtins})
         output = captured.getvalue()
-        return output if output else "(no output)"
+        result = output if output else "(no output)"
+        return (
+            f"{result}\n\n"
+            f"[REVIEW REQUIRED: You executed code above. "
+            f"Verify the output is correct before using it in your final result. "
+            f"Do NOT blindly trust code execution output — it is your "
+            f"responsibility to validate it against acceptance criteria.]"
+        )
     except Exception as exc:
         err_output = captured.getvalue()
         return f"Error: {type(exc).__name__}: {exc}" + (

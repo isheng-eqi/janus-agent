@@ -15,12 +15,14 @@ only plans, dispatches, tracks, and summarizes.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import time
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
+from .console import _jin, _qing, _zhu
 from .prompts import context_discipline_prompt, extract_json
 from .protocol import (
     Confidence,
@@ -523,6 +525,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     ),
                     intent=spec.intent,
                     goal=spec.goal,
+                    user_goal=spec.user_goal,
                     constraints=spec.constraints,
                     depth=spec.depth,
                 )
@@ -833,6 +836,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
             context="\n".join(context_parts),
             intent=spec.intent,
             goal=spec.goal,
+            user_goal=spec.user_goal,
             constraints=spec.constraints,
             depth=spec.depth,
         )
@@ -957,7 +961,10 @@ right granularity so each sub-task can be executed independently by a Worker."""
         warnings: list[str] = []
 
         # ── Check 1: result field is empty ────────────────────────────
-        result_text = (result.result or "").strip()
+        raw = result.result
+        if not isinstance(raw, str):
+            raw = json.dumps(raw, ensure_ascii=False) if raw is not None else ""
+        result_text = raw.strip()
         if not result_text:
             warnings.append(
                 "Worker result is empty — may be incomplete or failed silently."
@@ -1063,7 +1070,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
             if r.status == TaskStatus.FAILURE:
                 # Rich failure detail: include the full result text
                 detail_line = (
-                    f"【朱】{task_label}: {r.summary}"
+                    f"{_zhu(task_label)}: {r.summary}"
                 )
                 details.append(detail_line)
                 # Extract the first meaningful failure reason from result
@@ -1076,7 +1083,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
                 )
                 if is_sub_review_failed:
                     failure_details.append(
-                        f"【青】{task_label} 子任务审核未通过: {r.summary}"
+                        f"{_qing(task_label)} 子任务审核未通过: {r.summary}"
                     )
                 elif is_review_failed:
                     # Extract review issues
@@ -1086,7 +1093,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
                             review_line = line.strip()
                             break
                     failure_details.append(
-                        f"【朱】{task_label} 审查未通过 — {r.summary}"
+                        f"{_zhu(task_label)} 审查未通过 — {r.summary}"
                         + (f"\n    审查问题: {review_line}" if review_line else "")
                         + criteria_note
                     )
@@ -1099,7 +1106,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     })
                 else:
                     failure_details.append(
-                        f"【朱】{task_label} — {failure_reason}"
+                        f"{_zhu(task_label)} — {failure_reason}"
                         + criteria_note
                     )
                     # Add structured failure data even for non-review failures
@@ -1112,11 +1119,11 @@ right granularity so each sub-task can be executed independently by a Worker."""
             elif r.status == TaskStatus.SUCCESS:
                 verdict_note = ""
                 if is_sub_review_failed:
-                    verdict_note = " [青·子任务审查失败]"
+                    verdict_note = f" [{_qing('子任务审查失败')}]"
                 elif "审查:" in r.summary:
                     verdict_note = ""
                 details.append(
-                    f"【金】{task_label}: {r.summary}{verdict_note}"
+                    f"{_jin(task_label)}: {r.summary}{verdict_note}"
                 )
             else:
                 details.append(

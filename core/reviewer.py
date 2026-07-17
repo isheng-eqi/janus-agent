@@ -301,6 +301,9 @@ hard-requirement failure.
 "minor_revisions".
 5. When in doubt between two severities, choose the HIGHER one. Understating \
 severity masks problems; overstating triggers a verification check.
+6. Regardless of task priority, empty or placeholder artifacts (files without \
+meaningful content) ALWAYS constitute at least a MAJOR issue. Speed is no \
+excuse for empty deliverables.
 
 Be precise and evidence-based. For each criterion, cite specific evidence \
 from the result and artifact contents.
@@ -538,12 +541,15 @@ Output ONLY a JSON object with this schema:
 
         # ── Hard artifact existence check (P0 fix) ───────────────────────
         # Before spending LLM tokens on review, verify that every file
-        # the Worker claims to have created actually exists on disk.
-        # File existence is a hard fact — no LLM needed to judge it.
+        # the Worker claims to have created actually exists on disk AND
+        # has non-zero content (anti "file bombing" — creating empty shells).
         missing_artifacts = []
+        empty_artifacts = []
         for path in result.artifacts:
             if not os.path.exists(path):
                 missing_artifacts.append(path)
+            elif os.path.getsize(path) == 0:
+                empty_artifacts.append(path)
 
         if missing_artifacts:
             return ReviewResult(
@@ -553,6 +559,29 @@ Output ONLY a JSON object with this schema:
                     description=f"声称的文件不存在: {', '.join(missing_artifacts)}"
                 )],
                 summary="产物真实性校验失败"
+            )
+
+        if empty_artifacts:
+            return ReviewResult(
+                verdict=ReviewVerdict.MAJOR_REVISIONS,
+                issues=[ReviewIssue(
+                    severity=Severity.MAJOR,
+                    description=(
+                        f"文件存在但为空 (可能为占位产物): "
+                        f"{', '.join(empty_artifacts)}"
+                    )
+                )],
+                summary="产物为空"
+            )
+
+        # ── Budget-exhaustion marker check ────────────────────────────────
+        # If Worker ran out of budget, flag for deeper scrutiny.
+        budget_exhausted = "[BUDGET-EXHAUSTED:" in (result.result or "")
+        if budget_exhausted:
+            logger.warning(
+                "Task %r: Worker budget exhausted — %d artifacts preserved. "
+                "Applying stricter review.",
+                spec.task_id, len(result.artifacts),
             )
 
         # ── Build messages ───────────────────────────────────────────────
