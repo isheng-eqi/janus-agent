@@ -539,17 +539,35 @@ Output ONLY a JSON object with this schema:
                 ),
             )
 
-        # ── Hard artifact existence check (P0 fix) ───────────────────────
-        # Before spending LLM tokens on review, verify that every file
-        # the Worker claims to have created actually exists on disk AND
-        # has non-zero content (anti "file bombing" — creating empty shells).
+        # ── Hard artifact content check (P0 fix) ───────────────────────
+        # Verify artifact files have meaningful content — not empty shells
+        # or one-line placeholders ("# ok", "# todo", etc.).
+        _PLACEHOLDER_PATTERNS = [
+            "# ok", "# todo", "# placeholder", "# stub",
+            "# TODO", "pass", "return None", "# implement",
+        ]
+        _MIN_MEANINGFUL_BYTES = 80
+
         missing_artifacts = []
-        empty_artifacts = []
+        suspicious_artifacts = []
         for path in result.artifacts:
             if not os.path.exists(path):
                 missing_artifacts.append(path)
-            elif os.path.getsize(path) == 0:
-                empty_artifacts.append(path)
+                continue
+            size = os.path.getsize(path)
+            if size == 0:
+                suspicious_artifacts.append(f"{path} (0 bytes)")
+                continue
+            if size < _MIN_MEANINGFUL_BYTES:
+                try:
+                    with open(path, "r", encoding="utf-8", errors="replace") as f:
+                        head = f.read(200).strip().lower()
+                    if any(p.lower() in head for p in _PLACEHOLDER_PATTERNS):
+                        suspicious_artifacts.append(
+                            f"{path} ({size}B, placeholder: '{head[:60]}')"
+                        )
+                except Exception:
+                    pass  # binary file, skip pattern check
 
         if missing_artifacts:
             return ReviewResult(
@@ -561,17 +579,17 @@ Output ONLY a JSON object with this schema:
                 summary="产物真实性校验失败"
             )
 
-        if empty_artifacts:
+        if suspicious_artifacts:
             return ReviewResult(
                 verdict=ReviewVerdict.MAJOR_REVISIONS,
                 issues=[ReviewIssue(
                     severity=Severity.MAJOR,
                     description=(
-                        f"文件存在但为空 (可能为占位产物): "
-                        f"{', '.join(empty_artifacts)}"
+                        f"产物内容可疑 (空文件或占位符): "
+                        f"{'; '.join(suspicious_artifacts)}"
                     )
                 )],
-                summary="产物为空"
+                summary="产物内容可疑"
             )
 
         # ── Budget-exhaustion marker check ────────────────────────────────

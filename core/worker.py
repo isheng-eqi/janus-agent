@@ -1287,8 +1287,35 @@ def _real_execute_code(code: str) -> str:
     captured = io.StringIO()
     sys.stdout = captured
 
+    # Safe import whitelist — only allow stdlib data-processing modules.
+    # Blocks os, subprocess, sys, shutil, and other dangerous modules.
+    _SAFE_MODULES = frozenset({
+        "json", "re", "math", "cmath", "statistics",
+        "collections", "itertools", "functools", "operator",
+        "datetime", "time", "calendar",
+        "textwrap", "string", "unicodedata",
+        "csv", "io", "pathlib",
+        "dataclasses", "enum", "typing",
+        "copy", "pprint", "decimal", "fractions",
+        "random", "hashlib", "base64", "binascii",
+        "html", "xml.etree.ElementTree", "urllib.parse",
+        "struct", "array",
+    })
+
+    def _safe_import(name, *args, **kwargs):
+        if name not in _SAFE_MODULES:
+            raise ImportError(
+                f"Module '{name}' is not in the allowed import list. "
+                f"Allowed: {sorted(_SAFE_MODULES)}"
+            )
+        return __import__(name, *args, **kwargs)
+
+    exec_namespace = {
+        "__builtins__": {**safe_builtins, "__import__": _safe_import}
+    }
+
     try:
-        exec(code, {"__builtins__": safe_builtins})
+        exec(code, exec_namespace)
         output = captured.getvalue()
         result = output if output else "(no output)"
         return (

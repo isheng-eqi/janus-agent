@@ -362,15 +362,37 @@ right granularity so each sub-task can be executed independently by a Worker."""
             },
         ]
 
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                extra_body={"thinking": {"type": "enabled"}},
-            )
-        except Exception as exc:
-            logger.exception("Plan API call failed.")
-            self._last_error = f"API call failed: {type(exc).__name__}"
+        _API_MAX_RETRIES = 3
+        _API_RETRY_DELAY = 2.0
+        response = None
+        last_api_error = None
+
+        for api_attempt in range(_API_MAX_RETRIES + 1):
+            try:
+                response = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    extra_body={"thinking": {"type": "enabled"}},
+                )
+                break
+            except Exception as exc:
+                last_api_error = exc
+                if api_attempt < _API_MAX_RETRIES:
+                    delay = _API_RETRY_DELAY * (2 ** api_attempt)
+                    logger.warning(
+                        "Planner API call failed (attempt %d/%d), "
+                        "retrying in %.1fs: %s",
+                        api_attempt + 1, _API_MAX_RETRIES, delay, exc,
+                    )
+                    import time as _time
+                    _time.sleep(delay)
+                else:
+                    logger.exception("Plan API call failed after %d retries.", _API_MAX_RETRIES)
+                    self._last_error = f"API call failed after {_API_MAX_RETRIES} retries: {type(exc).__name__}"
+                    return []
+
+        if response is None:
+            self._last_error = "API call failed: all retries exhausted"
             return []
 
         if not response.choices:
