@@ -15,6 +15,7 @@ Integration point:
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -256,26 +257,54 @@ requirements.
 Given a task specification with acceptance criteria and a Worker's delivered \
 result, evaluate whether the result actually meets every criterion.
 
-Be precise and evidence-based:
-- For each acceptance criterion, state whether it is satisfied and cite \
-specific evidence from the result.
-- If a criterion is partially met, explain what is missing.
-- Do NOT assume — if evidence is absent, flag it as an issue.
+## Review Philosophy: Verify, Don't Presume
 
-Acceptance criteria are classified as [HARD] or [SOFT]:
-- [HARD] = must-have, zero tolerance — failure is blocking.
-- [SOFT] = nice-to-have, minor deviations acceptable.
-- Unmarked criteria default to [HARD].
+The Worker who produced this deliverable had direct access to tools, files, \
+and execution context that you do not have. Your job is NOT to second-guess \
+every decision — it is to verify that the Worker's claims are backed by \
+evidence in the artifact contents and result summary.
 
-For every issue you find, assign a severity level:
-- **critical**: The result is completely unusable — [HARD] criterion violated \
-in a way that makes the output wrong, dangerous, or non-functional.
-- **major**: A [HARD] criterion is not met — significant missing functionality \
-or incorrect behavior.
-- **minor**: A [SOFT] criterion is not met, or a [HARD] criterion has a small \
-deviation — result is usable but should be fixed.
-- **suggestion**: Optimization or improvement idea — does NOT block approval.
-(SOFT criteria failures typically map here or to minor.)"""
+- If the Worker claims something and the artifact contents support it → \
+criterion is SATISFIED. Do not invent hypothetical failure modes.
+- If evidence is absent or contradictory → flag as an issue with evidence.
+- If the Worker says "X is done" and the artifact shows X is done → ACCEPT.
+- The burden of proof is on the ABSENCE of evidence, not the presence of \
+perfection. A deliverable that meets all stated criteria is APPROVED \
+regardless of whether YOU would have done it differently.
+
+## Acceptance Criteria Classification
+
+Criteria are marked [HARD] or [SOFT]. Unmarked criteria default to [HARD].
+
+## EXACT SEVERITY MAPPING (this is the single authoritative rule set)
+
+For each criterion, identify its class, then apply the corresponding rule:
+
+| Criterion Class | Failure Mode                | Severity   | Verdict Floor     |
+|-----------------|-----------------------------|------------|-------------------|
+| [HARD]          | completely unmet / absent   | critical   | rejected          |
+| [HARD]          | significantly wrong         | major      | major_revisions   |
+| [HARD]          | small / partial deviation   | major      | major_revisions   |
+| [SOFT]          | completely unmet / absent   | minor      | minor_revisions   |
+| [SOFT]          | partially met / suboptimal  | suggestion | approved_with_notes |
+| ANY             | optimization / improvement  | suggestion | approved_with_notes |
+
+## NON-NEGOTIABLE RULES
+
+1. If a [HARD] criterion is NOT fully met → severity CANNOT be "minor" or \
+"suggestion" for that issue. A small gap on a hard requirement is still a \
+hard-requirement failure.
+2. If at least one issue has severity "critical" → verdict MUST be "rejected".
+3. If at least one issue has severity "major" → verdict MUST be at least \
+"major_revisions".
+4. SOFT-only failures (no HARD criterion violated) → verdict is at most \
+"minor_revisions".
+5. When in doubt between two severities, choose the HIGHER one. Understating \
+severity masks problems; overstating triggers a verification check.
+
+Be precise and evidence-based. For each criterion, cite specific evidence \
+from the result and artifact contents.
+"""
 
     _REVIEW_USER_TEMPLATE = """\
 TASK: {description}
@@ -286,15 +315,6 @@ GOAL: {goal}
 请确认这份产出是用户要的东西，而不只是满足验收标准。
 CONSTRAINTS: {constraints}
 INTENT: {intent}
-
-CRITERIA CLASSIFICATION (how to apply different scrutiny levels):
-- **[HARD]** criteria are must-haves — non-negotiable requirements.
-  Failure to meet a HARD criterion → severity must be at least **major**,
-  and the overall verdict must be **major_revisions** or **rejected**.
-- **[SOFT]** criteria are guidelines / nice-to-haves — minor deviations are acceptable.
-  Failure on SOFT criteria alone → severity should be **minor** or **suggestion**,
-  and the overall verdict should be **minor_revisions** or **approved_with_notes**.
-- **Unmarked** criteria default to [HARD].
 
 DELIVERED RESULT:
 Status: {status}
@@ -404,7 +424,7 @@ Output ONLY a JSON object with this schema:
         return content
 
     @staticmethod
-    def _build_artifact_contents(artifacts: list[str], max_per_file: int = 1000, max_total: int = 8000) -> str:
+    def _build_artifact_contents(artifacts: list[str], max_per_file: int = 3000, max_total: int = 16000) -> str:
         """Pre-load artifact file contents for the review prompt.
 
         Reads each artifact file and formats its contents inline.  Small files
@@ -416,8 +436,8 @@ Output ONLY a JSON object with this schema:
 
         Args:
             artifacts: List of artifact file paths.
-            max_per_file: Max characters to include per file (default 1000).
-            max_total: Hard cap on total characters in the section (default 8000).
+            max_per_file: Max characters to include per file (default 3000).
+            max_total: Hard cap on total characters in the section (default 16000).
 
         Returns:
             A formatted string suitable for embedding in the review prompt.
@@ -516,6 +536,25 @@ Output ONLY a JSON object with this schema:
                 ),
             )
 
+        # ── Hard artifact existence check (P0 fix) ───────────────────────
+        # Before spending LLM tokens on review, verify that every file
+        # the Worker claims to have created actually exists on disk.
+        # File existence is a hard fact — no LLM needed to judge it.
+        missing_artifacts = []
+        for path in result.artifacts:
+            if not os.path.exists(path):
+                missing_artifacts.append(path)
+
+        if missing_artifacts:
+            return ReviewResult(
+                verdict=ReviewVerdict.REJECTED,
+                issues=[ReviewIssue(
+                    severity=Severity.CRITICAL,
+                    description=f"声称的文件不存在: {', '.join(missing_artifacts)}"
+                )],
+                summary="产物真实性校验失败"
+            )
+
         # ── Build messages ───────────────────────────────────────────────
         artifact_contents = self._build_artifact_contents(result.artifacts)
         # Use manual placeholder replacement instead of .format() to avoid
@@ -585,7 +624,12 @@ Output ONLY a JSON object with this schema:
             )
 
         # ── Parse JSON ───────────────────────────────────────────────────
-        return self._parse_review_result(content)
+        parsed = self._parse_review_result(content)
+
+        # ── Rule-engine calibration (enforce severity-verdict consistency) ──
+        parsed = self._calibrate_verdict(parsed, spec.acceptance_criteria)
+
+        return parsed
 
     # -- helpers --------------------------------------------------------------
 
@@ -621,3 +665,111 @@ Output ONLY a JSON object with this schema:
             issues=[ReviewIssue(Severity.CRITICAL, "Reviewer returned non-JSON or malformed JSON.")],
             evidence=text.strip() or "(empty response)",
         )
+
+    @staticmethod
+    def _calibrate_verdict(
+        result: ReviewResult,
+        acceptance_criteria: str,
+    ) -> ReviewResult:
+        """Post-hoc calibration: enforce hard rules that the LLM might violate.
+
+        This is a zero-token, deterministic rule engine. It catches:
+        - [HARD] criterion failure assigned severity=minor or suggestion
+        - CRITICAL issues present but verdict not rejected
+        - MAJOR issues present but verdict less than major_revisions
+        """
+        import re
+
+        adjustments: list[str] = []
+        adjusted_issues = list(result.issues)
+
+        # Step 1: Extract [HARD] and [SOFT] criteria keywords
+        hard_texts = re.findall(
+            r'\[HARD\]\s*(.+?)(?=\[HARD\]|\[SOFT\]|$)', acceptance_criteria
+        )
+        if not hard_texts:
+            hard_texts = [
+                line for line in acceptance_criteria.split('\n')
+                if line.strip() and '[SOFT]' not in line
+            ]
+        soft_texts = re.findall(
+            r'\[SOFT\]\s*(.+?)(?=\[HARD\]|\[SOFT\]|$)', acceptance_criteria
+        )
+
+        hard_keywords: set[str] = set()
+        for hc in hard_texts:
+            for w in hc.strip().split()[:4]:
+                if len(w) > 3:
+                    hard_keywords.add(w.lower())
+
+        soft_keywords: set[str] = set()
+        for sc in soft_texts:
+            for w in sc.strip().split()[:4]:
+                if len(w) > 3:
+                    soft_keywords.add(w.lower())
+
+        # Step 2: Upgrade severity for issues referencing [HARD] criteria
+        for i, issue in enumerate(adjusted_issues):
+            desc_lower = issue.description.lower()
+            hits_hard = any(kw in desc_lower for kw in hard_keywords)
+            hits_soft = any(kw in desc_lower for kw in soft_keywords)
+
+            if hits_hard and not hits_soft:
+                if issue.severity in (Severity.MINOR, Severity.SUGGESTION):
+                    old_sev = issue.severity.value
+                    adjusted_issues[i] = ReviewIssue(
+                        severity=Severity.MAJOR,
+                        description=(
+                            f"[CALIBRATED: was {old_sev}, upgraded to major "
+                            f"(references [HARD] criterion)] "
+                            f"{issue.description}"
+                        ),
+                    )
+                    adjustments.append(
+                        f"Upgraded issue #{i+1} from {old_sev} -> major"
+                    )
+
+        # Step 3: Derive verdict floor from issue severities
+        has_critical = any(i.severity == Severity.CRITICAL for i in adjusted_issues)
+        has_major = any(i.severity == Severity.MAJOR for i in adjusted_issues)
+        has_minor = any(i.severity == Severity.MINOR for i in adjusted_issues)
+        has_suggestion = any(i.severity == Severity.SUGGESTION for i in adjusted_issues)
+        no_issues = len(adjusted_issues) == 0
+
+        verdict_rank = {
+            ReviewVerdict.APPROVED: 0,
+            ReviewVerdict.APPROVED_WITH_NOTES: 1,
+            ReviewVerdict.MINOR_REVISIONS: 2,
+            ReviewVerdict.MAJOR_REVISIONS: 3,
+            ReviewVerdict.REJECTED: 4,
+        }
+
+        if no_issues:
+            floor_verdict = ReviewVerdict.APPROVED
+        elif has_critical:
+            floor_verdict = ReviewVerdict.REJECTED
+        elif has_major:
+            floor_verdict = ReviewVerdict.MAJOR_REVISIONS
+        elif has_minor:
+            floor_verdict = ReviewVerdict.MINOR_REVISIONS
+        elif has_suggestion:
+            floor_verdict = ReviewVerdict.APPROVED_WITH_NOTES
+        else:
+            floor_verdict = ReviewVerdict.APPROVED
+
+        if verdict_rank.get(result.verdict, 0) < verdict_rank.get(floor_verdict, 0):
+            old_verdict = result.verdict.value
+            adjustments.append(
+                f"Upgraded verdict from {old_verdict} -> {floor_verdict.value}"
+            )
+            result.verdict = floor_verdict
+
+        # Step 4: Append calibration note
+        if adjustments:
+            result.evidence = (result.evidence or "") + (
+                "\n\n[CALIBRATION: rule-engine corrections]\n"
+                + "\n".join(f"  - {a}" for a in adjustments)
+            )
+
+        result.issues = adjusted_issues
+        return result
