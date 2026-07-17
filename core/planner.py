@@ -288,6 +288,12 @@ right granularity so each sub-task can be executed independently by a Worker."""
             model  # Planner's model is also the default Worker model
         )
 
+        # INSPECTOR-INDEPENDENCE: 收集被Planner降级的Reviewer原始裁决
+        self._reviewer_findings: list[dict] = []
+
+        # FEEDFORWARD-LOOP: 收集Reviewer对分解策略的反馈，改进未来的_plan()
+        self._review_feedback: list[str] = []
+
         self._client = OpenAI(
             base_url="https://api.deepseek.com",
             api_key=api_key,
@@ -307,6 +313,8 @@ right granularity so each sub-task can be executed independently by a Worker."""
         # ── 1. Reset state ──────────────────────────────────────────────
         self._task_manager.reset()
         self._last_error = None  # clear stale error from previous run
+        self._reviewer_findings.clear()  # INSPECTOR-INDEPENDENCE
+        self._review_feedback.clear()    # FEEDFORWARD-LOOP: reset per execution
 
         # ── 2. Tactical decomposition ───────────────────────────────────
         specs = self._plan(directive)
@@ -436,6 +444,28 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     check = parent
         return None
 
+    # FEEDFORWARD-LOOP: 构建审查反馈注入段
+    def _build_feedback_section(self) -> str:
+        """Build a prompt section with historical review feedback.
+
+        When _review_feedback has accumulated patterns from prior reviews,
+        inject them as a "lessons learned" section so the Planner improves
+        its decomposition strategy.  Capped at 5 recent items to avoid
+        prompt bloat.
+        """
+        if not self._review_feedback:
+            return ""
+        recent = self._review_feedback[-5:]  # cap at 5 items
+        lines = [
+            "\n## 上次审查反馈：请避免以下问题",
+            "Reviewer 在前序任务中发现了与任务分解/验收标准相关的问题。",
+            "请在本次分解时特别注意避免：\n",
+        ]
+        for i, fb in enumerate(recent, 1):
+            lines.append(f"  {i}. {fb}")
+        lines.append("")
+        return "\n".join(lines) + "\n"
+
     def _plan(self, directive: Directive) -> list[TaskSpec]:
         """Call the LLM to break *directive* into discrete ``TaskSpec`` items.
 
@@ -471,6 +501,9 @@ right granularity so each sub-task can be executed independently by a Worker."""
             {
                 "role": "user",
                 "content": (
+                    # FEEDFORWARD-LOOP: 注入上次审查反馈，改进分解策略
+                    self._build_feedback_section()
+                    +
                     "Decompose the following goal into a JSON array of task "
                     "objects. Each task object must have:\n"
                     '- "task_id": string, unique identifier (e.g., "task-1", "task-2")\n'
@@ -739,12 +772,36 @@ right granularity so each sub-task can be executed independently by a Worker."""
             )
             last_review = review
 
+            # FEEDFORWARD-LOOP: 从Reviewer问题中提取对分解策略的反馈
+            if review.issues:
+                self._record_decomposition_feedback(
+                    review, spec.acceptance_criteria
+                )
+
             # ── HARD/SOFT verdict adjustment ──────────────────────────
             # If the Reviewer over-reacted to SOFT-only criteria, demote the
             # verdict so the Worker isn't forced through unnecessary retries.
+            # INSPECTOR-INDEPENDENCE: 保存原始verdict，检测降级
+            _original_verdict = review.verdict
             review = self._adjust_verdict_for_criteria(
                 review, spec.acceptance_criteria
             )
+            # INSPECTOR-INDEPENDENCE: 如果裁决被降级，记录到独立监察发现
+            if review.verdict != _original_verdict:
+                self._reviewer_findings.append({
+                    "task_id": spec.task_id,
+                    "original_verdict": _original_verdict.value,
+                    "downgraded_to": review.verdict.value,
+                    "issues": [
+                        {"severity": i.severity.value, "description": i.description}
+                        for i in last_review.issues
+                    ],
+                    "reason": (
+                        f"Planner._adjust_verdict_for_criteria downgraded "
+                        f"from {_original_verdict.value} to {review.verdict.value} "
+                        f"based on criteria label analysis"
+                    ),
+                })
 
             # ── APPROVED / APPROVED_WITH_NOTES → accept ──────────────
             if review.verdict in (
@@ -994,6 +1051,65 @@ right granularity so each sub-task can be executed independently by a Worker."""
                 review.verdict = ReviewVerdict.MINOR_REVISIONS
 
         return review
+
+    # FEEDFORWARD-LOOP: 从Reviewer问题中提取分解策略反馈
+    @staticmethod
+    def _extract_decomposition_feedback(
+        review: ReviewResult,
+        acceptance_criteria: str,
+    ) -> list[str]:
+        """Extract decomposition-strategy feedback from Reviewer issues.
+
+        Looks for patterns indicating that the task decomposition or
+        acceptance criteria themselves are part of the problem — not just
+        Worker execution quality.  These patterns are fed back to _plan()
+        to improve future decomposition quality.
+
+        Returns a list of feedback strings (may be empty).
+        """
+        # FEEDFORWARD-LOOP: 关键词匹配——审查问题是否指向分解/验收标准问题
+        _FEEDBACK_KEYWORDS = [
+            # English
+            "acceptance criteria", "too vague", "too broad", "unclear",
+            "ambiguous", "task decomposition", "poorly defined",
+            "not specific enough", "scope too large", "criterion",
+            "impossible to verify", "unmeasurable",
+            # Chinese
+            "验收标准", "太模糊", "太宽泛", "不明确", "不清晰",
+            "任务分解", "分解粒度", "不够具体", "范围太大",
+            "无法验证", "不可衡量", "定义不清",
+        ]
+
+        feedback_items: list[str] = []
+        for issue in review.issues:
+            desc_lower = issue.description.lower()
+            for kw in _FEEDBACK_KEYWORDS:
+                if kw.lower() in desc_lower:
+                    feedback_items.append(
+                        f"[{issue.severity.value}] {issue.description}"
+                    )
+                    break  # one feedback entry per issue
+
+        return feedback_items
+
+    # FEEDFORWARD-LOOP: 将提取的反馈存储到Planner实例
+    def _record_decomposition_feedback(
+        self,
+        review: ReviewResult,
+        acceptance_criteria: str,
+    ) -> None:
+        """Extract and store decomposition feedback from a review.
+
+        Called from _dispatch_with_review after each review.
+        Deduplicates against existing feedback to avoid noise.
+        """
+        new_feedback = self._extract_decomposition_feedback(
+            review, acceptance_criteria
+        )
+        for fb in new_feedback:
+            # Simple dedup: check if similar feedback already recorded
+            if fb not in self._review_feedback:
+                self._review_feedback.append(fb)
 
     @staticmethod
     def _make_retry_spec(
@@ -1372,5 +1488,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
             goal=goal,
             constraints=constraints,
             has_retry_exhausted=any(r.retry_exhausted for r in results),  # L3-9
+            # INSPECTOR-INDEPENDENCE: 传递独立监察发现
+            reviewer_findings=list(self._reviewer_findings),
         )
 

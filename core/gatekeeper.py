@@ -877,6 +877,11 @@ Output ONLY valid JSON."""
         if total_failed > 0:
             merged_summary += f", {total_failed} failed"
 
+        # INSPECTOR-INDEPENDENCE: 合并独立监察发现 (按task_id去重)
+        _old_ids = {f.get("task_id") for f in old.reviewer_findings}
+        _new_unique = [f for f in new.reviewer_findings if f.get("task_id") not in _old_ids]
+        _merged_findings = list(old.reviewer_findings) + _new_unique
+
         return ExecutionReport(
             status=status,
             total_tasks=total_tasks,
@@ -888,6 +893,7 @@ Output ONLY valid JSON."""
             goal=old.goal or new.goal,
             constraints=old.constraints or new.constraints,
             has_retry_exhausted=old.has_retry_exhausted or new.has_retry_exhausted,  # L3-9
+            reviewer_findings=_merged_findings,
         )
 
     # -- internal: delivery validation ----------------------------------------
@@ -1017,6 +1023,31 @@ Output ONLY valid JSON."""
             lines.append(
                 f"{_jin(f'→ {report.failed} 个任务未完成，输入 help 查看排错建议。')}"
             )
+
+        # INSPECTOR-INDEPENDENCE: 独立监察发现章节
+        # Reviewer的发现不经过Planner过滤，直接展示给用户
+        if report.reviewer_findings:
+            lines.append("")
+            lines.append(f"{_danmo('── 独立监察发现 ──')}")
+            lines.append(
+                "以下问题由 Reviewer 独立发现，但 Planner 在裁决调整中降级了严重程度。"
+            )
+            lines.append("请关注这些可能需要进一步检查的项：\n")
+            for i, finding in enumerate(report.reviewer_findings, 1):
+                task_id = finding.get("task_id", "?")
+                orig = finding.get("original_verdict", "?")
+                downgraded = finding.get("downgraded_to", "?")
+                reason = finding.get("reason", "")
+                issues = finding.get("issues", [])
+                lines.append(
+                    f"  {i}. 任务 {task_id}: "
+                    f"Reviewer 判 {_zhu(orig)} → Planner 降级为 {_qing(downgraded)}"
+                )
+                for issue in issues[:3]:  # 最多展示3条
+                    lines.append(
+                        f"     [{issue.get('severity', '?')}] "
+                        f"{issue.get('description', '')}"
+                    )
 
         return "\n".join(lines)
 
