@@ -103,6 +103,111 @@ def _estimate_task_difficulty(description: str) -> int:
     return max(1, min(5, difficulty))
 
 
+# L3-8: dependency-aware difficulty sort
+def _difficulty_sort_preserve_deps(specs: list[TaskSpec]) -> list[TaskSpec]:
+    """Sort sub-tasks by difficulty (hardest first), but preserve dependencies.
+
+    If a task description mentions another task's ID (e.g. ``"needs output
+    from task-2"``, ``"depends on task-1"``, ``"需要 task-3 的输出"``),
+    the dependent task MUST stay after its dependency — regardless of
+    difficulty scores.
+
+    Independent tasks (no detected dependencies) are sorted by estimated
+    difficulty descending so the hardest tasks get the most time/attention.
+    """
+    import re as _re
+
+    if len(specs) <= 1:
+        return list(specs)
+
+    # ── 1. Detect dependency patterns ───────────────────────────────────
+    # Patterns that indicate "this task needs output from another task"
+    _DEP_PATTERNS: list[_re.Pattern] = [
+        _re.compile(r'(?:depends? on|needs? (?:output|result) from|'
+                    r'after|requires? (?:output|result) from|'
+                    r'需要\s*|依赖于|依赖|基于|先于)\s*'
+                    r'(?:task[-_ ]?)?(\d+)',
+                    _re.IGNORECASE),
+        _re.compile(r'(?:task[-_ ]?)(\d+)\s*(?:先|优先|必须.*完成)'),
+        _re.compile(r'(?:after|following)\s+(?:task[-_ ]?)(\d+)',
+                    _re.IGNORECASE),
+    ]
+
+    # Build task_id → index mapping (match "task-N" or just "N")
+    _id_to_idx: dict[str, int] = {}
+    for idx, spec in enumerate(specs):
+        # Try to extract numeric ID
+        m = _re.search(r'(\d+)', spec.task_id)
+        if m:
+            _id_to_idx[m.group(1)] = idx
+        _id_to_idx[spec.task_id] = idx
+
+    # ── 2. Determine which tasks depend on which ────────────────────────
+    # dep_graph[i] = {indices of tasks that task i depends on}
+    dep_graph: list[set[int]] = [set() for _ in specs]
+
+    for i, spec in enumerate(specs):
+        desc = spec.description
+        for pat in _DEP_PATTERNS:
+            for m in pat.finditer(desc):
+                dep_id = m.group(1)
+                if dep_id in _id_to_idx and _id_to_idx[dep_id] != i:
+                    dep_graph[i].add(_id_to_idx[dep_id])
+        # Also check context for dependency hints
+        ctx = getattr(spec, 'context', '') or ''
+        if ctx:
+            for pat in _DEP_PATTERNS:
+                for m in pat.finditer(str(ctx)):
+                    dep_id = m.group(1)
+                    if dep_id in _id_to_idx and _id_to_idx[dep_id] != i:
+                        dep_graph[i].add(_id_to_idx[dep_id])
+
+    # ── 3. Compute difficulty scores ────────────────────────────────────
+    scores = [_estimate_task_difficulty(s.description) for s in specs]
+
+    # ── 4. Topological sort with difficulty tie-breaking ─────────────────
+    # Kahn's algorithm with a max-heap on difficulty
+    import heapq as _heapq
+
+    in_degree = [len(deps) for deps in dep_graph]
+    # Reverse graph: which tasks depend on task i?
+    rev_graph: list[list[int]] = [[] for _ in specs]
+    for i, deps in enumerate(dep_graph):
+        for d in deps:
+            rev_graph[d].append(i)
+
+    # Priority queue: (-score, index) → highest score first
+    # Only push independent nodes
+    heap: list[tuple[float, int]] = [
+        (-scores[i], i) for i in range(len(specs)) if in_degree[i] == 0
+    ]
+    _heapq.heapify(heap)
+
+    result: list[TaskSpec] = []
+    while heap:
+        _, node = _heapq.heappop(heap)
+        result.append(specs[node])
+        for dependent in rev_graph[node]:
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                _heapq.heappush(heap, (-scores[dependent], dependent))
+
+    # ── 5. Fallback: if topological sort failed (cycle or missed nodes),
+    #        fall through to original order → difficulty sort
+    if len(result) != len(specs):
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "Dependency-aware sort produced %d results for %d specs "
+            "(possible cycle). Falling back to difficulty-only sort.",
+            len(result), len(specs),
+        )
+        result = list(specs)
+        result.sort(key=lambda s: _estimate_task_difficulty(s.description),
+                    reverse=True)
+
+    return result
+
+
 # ============================================================================
 # Planner
 # ============================================================================
@@ -153,6 +258,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
         reviewer: Optional[Reviewer] = None,
         max_depth: int = 3,
         console: Optional[Console] = None,
+        budget_pool: int = 200,  # L3-6: total tool-call budget for all sub-tasks
     ) -> None:
         """Create a Planner.
 
@@ -177,6 +283,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
         self._console = console
         self._last_error: Optional[str] = None
         self._current_priority: str = "normal"
+        self._budget_pool: int = budget_pool
         self._worker_model: Optional[str] = (
             model  # Planner's model is also the default Worker model
         )
@@ -479,7 +586,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
             # L3-6: compute per-task tool-call budget from a total pool
             _valid_items = [it for it in raw_data if isinstance(it, dict)
                             and it.get("task_id") and it.get("description")]
-            _total_pool = 200
+            _total_pool = getattr(self, '_budget_pool', 200)  # L3-6: configurable
             _num_tasks = max(len(_valid_items), 1)
             _per_task_budget = max(_total_pool // _num_tasks, 10)
 
@@ -535,8 +642,9 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     "LLM returned empty task list — could not decompose "
                     "the directive into actionable tasks."
                 )
-            # L3-8: sort sub-tasks by estimated difficulty — hard tasks first
-            specs.sort(key=lambda s: _estimate_task_difficulty(s.description), reverse=True)
+            # L3-8: dependency-aware difficulty sort — hard tasks first,
+            # but tasks that depend on others stay after their dependencies.
+            specs = _difficulty_sort_preserve_deps(specs)
             return specs
 
         logger.warning(
@@ -622,11 +730,12 @@ right granularity so each sub-task can be executed independently by a Worker."""
                 )
 
             # REVIEW step
-            # L3-4: pass deep-review artifact limits
+            # L3-4: pass deep-review flag + artifact limits
             review = self._reviewer.review(
                 review_spec, result,
                 artifact_max_per_file=_artifact_limit,
                 artifact_max_total=_artifact_total,
+                deep_review=_is_deep_review,
             )
             last_review = review
 
@@ -681,11 +790,12 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     continue
                 else:
                     # attempt == 1: quick re-review to verify the fix actually worked
-                    # L3-4: pass deep-review artifact limits to re-review too
+                    # L3-4: pass deep-review flag + artifact limits to re-review too
                     re_review = self._reviewer.review(
                         spec, result,
                         artifact_max_per_file=_artifact_limit,
                         artifact_max_total=_artifact_total,
+                        deep_review=_is_deep_review,
                     )
 
                     # Check if new MAJOR or CRITICAL issues surfaced
@@ -789,12 +899,13 @@ right granularity so each sub-task can be executed independently by a Worker."""
         )
         failed_result = TaskResult(
             status=TaskStatus.FAILURE,
+            retry_exhausted=True,  # L3-9: structured field
             summary=(
                 f"Failed review after {max_retries} retries"
                 f"{review_verdict_text}"
             ),
             result=(
-                f"[RETRY_EXHAUSTED] All {max_retries + 1} review attempts failed. "  # L3-9
+                f"All {max_retries + 1} review attempts failed. "  # L3-9
                 f"The worker could not produce output meeting the "
                 f"acceptance criteria.\n"
                 f"[REVIEW FAILED] Issues: {review_issues_text or '(none recorded)'}"

@@ -77,6 +77,7 @@ class TaskResult:
     confidence: Confidence = Confidence.MEDIUM
     worker_id: Optional[str] = None
     sub_review_failed: bool = False  # Set when sub-worker review is exhausted
+    retry_exhausted: bool = False    # L3-9: all review retries consumed
 
     def validate(self) -> bool:
         """Check that NEEDS_DECOMPOSITION has a valid decomposition_request.
@@ -223,7 +224,6 @@ class Directive:
     """多轮对话历史上下文。由 Gatekeeper 从 Session 传入，供 Planner 在分解任务时
     参考，以理解用户的连续意图（例如 '继续上一个任务'）。"""
 
-    estimated_difficulty: int = 3  # L3-8: Gatekeeper's difficulty estimate (1-5)
 
 
 @dataclass

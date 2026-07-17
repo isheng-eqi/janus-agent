@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-import time
+import datetime
 from dataclasses import dataclass, asdict
 from typing import Any
 
@@ -63,7 +63,7 @@ def log_tool_call(
     log_path = os.path.join(log_dir, f"{task_id}.jsonl")
 
     record = ToolCallLog(
-        timestamp=time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+        timestamp=datetime.datetime.now().isoformat(),
         tool_name=tool_name,
         arguments=arguments,
         result_summary=result_text[:200],

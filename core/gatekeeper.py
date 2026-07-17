@@ -473,8 +473,7 @@ Output ONLY valid JSON."""
                     "{\n"
                     '  "intent": "strategic direction — what is the user really trying to achieve? Include the exact target path if one was specified.",\n'
                     '  "constraints": "hard constraints — what must NOT be violated?",\n'
-                    '  "priority": "speed" | "quality" | "balanced",\n'
-                    '  "estimated_difficulty": 1-5 (1=trivial, 5=very complex)\n'  # L3-8
+                    '  "priority": "speed" | "quality" | "balanced"\n'
                     "}\n\n"
                     f"User goal: {goal}"
                 ),
@@ -523,11 +522,6 @@ Output ONLY valid JSON."""
         parsed = extract_json(content)
 
         if isinstance(parsed, dict):
-            # L3-8: extract difficulty, clamped to 1-5
-            try:
-                _diff = int(parsed.get("estimated_difficulty", 3))
-            except (ValueError, TypeError):
-                _diff = 3
             return Directive(
                 goal=goal,
                 user_goal=pristine,
@@ -535,7 +529,6 @@ Output ONLY valid JSON."""
                 constraints=str(parsed.get("constraints", "")),
                 context=history_context,
                 priority=str(parsed.get("priority", "normal")),
-                estimated_difficulty=max(1, min(5, _diff)),  # L3-8
             )
 
         logger.warning(

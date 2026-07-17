@@ -307,6 +307,20 @@ excuse for empty deliverables.
 
 Be precise and evidence-based. For each criterion, cite specific evidence \
 from the result and artifact contents.
+
+## DEEP REVIEW MODE (when tool-call audit log is present)
+
+When the TOOL-CALL AUDIT LOG section is populated (not "(no tool-call log)"),
+you MUST perform a cross-comparison audit:
+1. For each claim the Worker makes in its result/summary, verify that a
+   corresponding tool invocation exists in the log.
+2. If the Worker claims to have read a file but no read_file call appears
+   in the log -> flag as CRITICAL deception.
+3. If the Worker claims to have written a file but no write_file call
+   appears -> flag as CRITICAL deception.
+4. If file paths in the Worker result do not match actual tool-call
+   arguments -> flag as MAJOR inconsistency.
+5. Cite specific tool-call timestamps as evidence for each verification.
 """
 
     _REVIEW_USER_TEMPLATE = """\
@@ -327,6 +341,9 @@ Artifact Paths: {artifacts}
 
 ARTIFACT CONTENTS (pre-loaded so you can inspect what was actually written):
 {artifact_contents}
+
+TOOL-CALL AUDIT LOG (Worker's actual tool invocations):
+{tool_log_section}
 
 For each acceptance criterion:
 1. Identify whether it is [HARD] or [SOFT].
@@ -504,6 +521,69 @@ Output ONLY a JSON object with this schema:
 
         return "".join(sections)
 
+    @staticmethod
+    def _build_tool_log_section(task_id: str, log_dir: str = "") -> str:
+        """Read the tool-call log for *task_id* and format it for the prompt.
+
+        Reads ``tool_logs/{task_id}.jsonl`` and returns a formatted section
+        listing each tool invocation with timestamp, tool name, and arguments.
+        Returns ``"(no tool-call log)"`` when no log file exists or it's empty.
+
+        Args:
+            task_id: The task whose tool log to read.
+            log_dir: Optional override for the log directory.  Defaults to
+                ``tool_logs/`` relative to the Janus project root.
+
+        Returns:
+            A formatted string for inclusion in the review prompt, or an
+            empty-fallback message.
+        """
+        import os as _os
+
+        if not task_id:
+            return "(no tool-call log)"
+
+        if not log_dir:
+            log_dir = _os.path.join(
+                _os.path.dirname(__file__), "..", "tool_logs"
+            )
+
+        log_path = _os.path.join(log_dir, f"{task_id}.jsonl")
+        if not _os.path.isfile(log_path):
+            return "(no tool-call log — file not found)"
+
+        lines: list[str] = []
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        import json as _json
+                        rec = _json.loads(line)
+                        ts = rec.get("timestamp", "?")
+                        tn = rec.get("tool_name", "?")
+                        args = rec.get("arguments", {})
+                        summary = rec.get("result_summary", "")[:100]
+                        lines.append(
+                            f"  [{ts}] {tn}({_json.dumps(args, ensure_ascii=False)})"
+                            f"  → {summary}"
+                        )
+                    except (ValueError, KeyError):
+                        lines.append(f"  (unparseable) {line[:120]}")
+        except OSError:
+            return "(no tool-call log — could not read file)"
+
+        if not lines:
+            return "(no tool-call log — empty)"
+
+        header = (
+            f"=== TOOL-CALL LOG for task {task_id} ===\n"
+            f"({len(lines)} invocation(s) recorded)\n"
+        )
+        return header + "\n".join(lines)
+
     # -- public API -----------------------------------------------------------
 
     def review(
@@ -512,6 +592,7 @@ Output ONLY a JSON object with this schema:
         result: TaskResult,
         artifact_max_per_file: int = 3000,
         artifact_max_total: int = 16000,
+        deep_review: bool = False,
     ) -> ReviewResult:
         """Audit *result* against *spec*'s acceptance criteria.
 
@@ -619,6 +700,16 @@ Output ONLY a JSON object with this schema:
             max_per_file=artifact_max_per_file,
             max_total=artifact_max_total,
         )
+        # ── L3-4 deep review: read tool-call log and add cross-comparison ─
+        tool_log_section = ""
+        if deep_review:
+            tool_log_section = self._build_tool_log_section(spec.task_id)
+            if tool_log_section:
+                logger.info(
+                    "Deep review for %r: loaded tool-call log (%d chars).",
+                    spec.task_id, len(tool_log_section),
+                )
+
         # Use manual placeholder replacement instead of .format() to avoid
         # crashes when dynamic content (e.g. Worker results) contains
         # literal { or } characters — .format() would interpret them as
@@ -640,6 +731,8 @@ Output ONLY a JSON object with this schema:
                 ", ".join(result.artifacts) if result.artifacts else "(none)"
             ))
             .replace("{artifact_contents}", artifact_contents)
+            .replace("{tool_log_section}", tool_log_section)
+            # L3-4 deep review: append cross-comparison instructions
             # The template used {{ and }} as .format() escape sequences
             # for the JSON schema example.  Since we're now using manual
             # .replace() instead of .format(), convert escaped braces
