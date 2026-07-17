@@ -346,12 +346,8 @@ Output ONLY valid JSON."""
         max_recovery = 2  # Max 2 recovery attempts at Gatekeeper level
 
         while recovery_attempts < max_recovery and report.failed > 0:
-            # L3-9: if tasks are retry-exhausted, don't waste recovery cycles
-            _retry_exhausted = any(
-                "[RETRY_EXHAUSTED]" in fd
-                for fd in (report.failed_details or [])
-            )
-            if _retry_exhausted:
+            # L3-9: if any sub-task exhausted retries, skip further recovery
+            if report.has_retry_exhausted:
                 logger.info(
                     "Gatekeeper: [RETRY_EXHAUSTED] detected — "
                     "skipping further recovery, delivering with caveat."

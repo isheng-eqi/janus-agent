@@ -1371,5 +1371,6 @@ right granularity so each sub-task can be executed independently by a Worker."""
             failed_tasks=failed_tasks,
             goal=goal,
             constraints=constraints,
+            has_retry_exhausted=any(r.retry_exhausted for r in results),  # L3-9
         )
 

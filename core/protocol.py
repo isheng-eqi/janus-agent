@@ -264,3 +264,6 @@ class ExecutionReport:
 
     constraints: str = ""
     """硬性约束，用于 Gatekeeper 确认约束遵守情况。"""
+
+    has_retry_exhausted: bool = False
+    """L3-9: 是否有任何子任务的重试次数已耗尽。"""
