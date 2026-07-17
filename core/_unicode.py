@@ -16,6 +16,15 @@ def _supports_unicode() -> bool:
         return os.environ.get('TERM', '') != 'linux'
 
     env = os.environ
+    # MSYS2 / Git Bash: claims TERM=xterm-256color but cannot reliably
+    # render box-drawing characters (─│┌└) and decorative Unicode symbols.
+    # Reference: Hermes Agent PR #24309 (display_compat.py)
+    if env.get('MSYSTEM'):
+        return False
+    ostype = (env.get('OSTYPE') or '').lower()
+    term = (env.get('TERM') or '').lower()
+    if any(t in ostype or t in term for t in ('msys', 'mingw')):
+        return False
     # Windows Terminal
     if 'WT_SESSION' in env:
         return True
