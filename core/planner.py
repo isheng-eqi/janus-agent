@@ -52,6 +52,57 @@ except ImportError as exc:
 logger = logging.getLogger(__name__)
 
 
+# L3-8: heuristic task-difficulty estimator (1-5)
+def _estimate_task_difficulty(description: str) -> int:
+    """Estimate a sub-task's difficulty from its description text.
+
+    Heuristic weights:
+    - File operations (create/modify/write/refactor): +2
+    - Complex actions (analyze/audit/review/debug): +2
+    - Moderate actions (search/find/read/check): +1
+    - Minimal actions (report/summarize/list): +0
+
+    Returns a value clamped to [1, 5].
+    """
+    desc_lower = description.lower()
+
+    _hard_keywords = [
+        "create", "modify", "write", "refactor", "重构", "implement",
+        "build", "generate", "transform", "migrate", "deploy",
+    ]
+    _complex_keywords = [
+        "analyze", "audit", "review", "debug", "分析", "审查", "调优",
+        "optimize", "secure", "validate", "verify",
+    ]
+    _moderate_keywords = [
+        "search", "find", "read", "check", "查找", "读取", "检查",
+        "test", "compare", "extract",
+    ]
+
+    difficulty = 1  # base
+    for kw in _hard_keywords:
+        if kw in desc_lower:
+            difficulty += 2
+            break  # only count strongest match
+    else:
+        for kw in _complex_keywords:
+            if kw in desc_lower:
+                difficulty += 2
+                break
+        else:
+            for kw in _moderate_keywords:
+                if kw in desc_lower:
+                    difficulty += 1
+                    break
+
+    # Extra weight for multiple files / directories
+    file_count = desc_lower.count("file") + desc_lower.count("文件") + desc_lower.count("path")
+    if file_count >= 3:
+        difficulty += 1
+
+    return max(1, min(5, difficulty))
+
+
 # ============================================================================
 # Planner
 # ============================================================================
@@ -424,6 +475,14 @@ right granularity so each sub-task can be executed independently by a Worker."""
         # -- Array of task objects? -------------------------------------------
         if isinstance(raw_data, list):
             specs: list[TaskSpec] = []
+
+            # L3-6: compute per-task tool-call budget from a total pool
+            _valid_items = [it for it in raw_data if isinstance(it, dict)
+                            and it.get("task_id") and it.get("description")]
+            _total_pool = 200
+            _num_tasks = max(len(_valid_items), 1)
+            _per_task_budget = max(_total_pool // _num_tasks, 10)
+
             for item in raw_data:
                 if not isinstance(item, dict):
                     continue
@@ -456,6 +515,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
                             user_goal=directive.user_goal or directive.goal,
                             constraints=directive.constraints,
                             depth=1,
+                            max_tool_calls=_per_task_budget,  # L3-6
                         )
                     )
                     # Validate the spec after construction
@@ -475,6 +535,8 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     "LLM returned empty task list — could not decompose "
                     "the directive into actionable tasks."
                 )
+            # L3-8: sort sub-tasks by estimated difficulty — hard tasks first
+            specs.sort(key=lambda s: _estimate_task_difficulty(s.description), reverse=True)
             return specs
 
         logger.warning(
@@ -509,6 +571,13 @@ right granularity so each sub-task can be executed independently by a Worker."""
 
         Results are accepted as-is when no reviewer is configured.
         """
+        # L3-4: deterministic deep-review sampling (10 %)
+        # Seed from task_id hash → same task always gets the same mode on retry.
+        _task_hash = hash(spec.task_id) & 0xFFFFFFFF
+        _is_deep_review = (_task_hash % 100) < 10
+        _artifact_limit = 8000 if _is_deep_review else 3000
+        _artifact_total = 32000 if _is_deep_review else 16000
+
         last_review = None
         original_task_id = spec.task_id  # saved for fallback when spec reassigned
         for attempt in range(max_retries + 1):
@@ -553,7 +622,12 @@ right granularity so each sub-task can be executed independently by a Worker."""
                 )
 
             # REVIEW step
-            review = self._reviewer.review(review_spec, result)
+            # L3-4: pass deep-review artifact limits
+            review = self._reviewer.review(
+                review_spec, result,
+                artifact_max_per_file=_artifact_limit,
+                artifact_max_total=_artifact_total,
+            )
             last_review = review
 
             # ── HARD/SOFT verdict adjustment ──────────────────────────
@@ -607,7 +681,12 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     continue
                 else:
                     # attempt == 1: quick re-review to verify the fix actually worked
-                    re_review = self._reviewer.review(spec, result)
+                    # L3-4: pass deep-review artifact limits to re-review too
+                    re_review = self._reviewer.review(
+                        spec, result,
+                        artifact_max_per_file=_artifact_limit,
+                        artifact_max_total=_artifact_total,
+                    )
 
                     # Check if new MAJOR or CRITICAL issues surfaced
                     escalated = any(
@@ -693,6 +772,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
                     return spec
 
         # All retries exhausted
+        # L3-9: mark with [RETRY_EXHAUSTED] so Gatekeeper can escalate strategy
         self._last_error = (
             f"Task {spec.task_id} failed review after "
             f"{max_retries + 1} attempts"
@@ -714,7 +794,7 @@ right granularity so each sub-task can be executed independently by a Worker."""
                 f"{review_verdict_text}"
             ),
             result=(
-                f"All {max_retries + 1} review attempts failed. "
+                f"[RETRY_EXHAUSTED] All {max_retries + 1} review attempts failed. "  # L3-9
                 f"The worker could not produce output meeting the "
                 f"acceptance criteria.\n"
                 f"[REVIEW FAILED] Issues: {review_issues_text or '(none recorded)'}"

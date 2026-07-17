@@ -346,6 +346,18 @@ Output ONLY valid JSON."""
         max_recovery = 2  # Max 2 recovery attempts at Gatekeeper level
 
         while recovery_attempts < max_recovery and report.failed > 0:
+            # L3-9: if tasks are retry-exhausted, don't waste recovery cycles
+            _retry_exhausted = any(
+                "[RETRY_EXHAUSTED]" in fd
+                for fd in (report.failed_details or [])
+            )
+            if _retry_exhausted:
+                logger.info(
+                    "Gatekeeper: [RETRY_EXHAUSTED] detected — "
+                    "skipping further recovery, delivering with caveat."
+                )
+                break
+
             logger.info(
                 "Gatekeeper recovery attempt %d/%d — %d task(s) failed.",
                 recovery_attempts + 1, max_recovery, report.failed,
@@ -461,7 +473,8 @@ Output ONLY valid JSON."""
                     "{\n"
                     '  "intent": "strategic direction — what is the user really trying to achieve? Include the exact target path if one was specified.",\n'
                     '  "constraints": "hard constraints — what must NOT be violated?",\n'
-                    '  "priority": "speed" | "quality" | "balanced"\n'
+                    '  "priority": "speed" | "quality" | "balanced",\n'
+                    '  "estimated_difficulty": 1-5 (1=trivial, 5=very complex)\n'  # L3-8
                     "}\n\n"
                     f"User goal: {goal}"
                 ),
@@ -510,6 +523,11 @@ Output ONLY valid JSON."""
         parsed = extract_json(content)
 
         if isinstance(parsed, dict):
+            # L3-8: extract difficulty, clamped to 1-5
+            try:
+                _diff = int(parsed.get("estimated_difficulty", 3))
+            except (ValueError, TypeError):
+                _diff = 3
             return Directive(
                 goal=goal,
                 user_goal=pristine,
@@ -517,6 +535,7 @@ Output ONLY valid JSON."""
                 constraints=str(parsed.get("constraints", "")),
                 context=history_context,
                 priority=str(parsed.get("priority", "normal")),
+                estimated_difficulty=max(1, min(5, _diff)),  # L3-8
             )
 
         logger.warning(

@@ -118,6 +118,8 @@ class TaskResult:
     @classmethod
     def from_dict(cls, data: dict) -> TaskResult:
         """Deserialize from a plain dict."""
+        import json as _json
+
         decomp = None
         if "decomposition_request" in data and data["decomposition_request"] is not None:
             dr = data["decomposition_request"]
@@ -129,10 +131,15 @@ class TaskResult:
                 ],
             )
 
+        result = data["result"]
+        # Normalize: LLMs sometimes nest a dict/list inside the "result" field.
+        if not isinstance(result, str):
+            result = _json.dumps(result, ensure_ascii=False)
+
         return cls(
             status=TaskStatus(data["status"]),
             summary=data["summary"],
-            result=data["result"],
+            result=result,
             decomposition_request=decomp,
             artifacts=data.get("artifacts", []),
             confidence=Confidence(data.get("confidence", "medium")),
@@ -177,6 +184,7 @@ class TaskSpec:
     """用户原始输入，一字不改，全链路贯穿。Worker 和 Reviewer 用这个对照原文。"""
     constraints: str = ""
     depth: int = 1
+    max_tool_calls: int = 50  # L3-6: per-task tool-call budget
 
     def validate(self) -> bool:
         """Check required fields. Returns False if task_id or description empty."""
@@ -214,6 +222,8 @@ class Directive:
     context: str = ""
     """多轮对话历史上下文。由 Gatekeeper 从 Session 传入，供 Planner 在分解任务时
     参考，以理解用户的连续意图（例如 '继续上一个任务'）。"""
+
+    estimated_difficulty: int = 3  # L3-8: Gatekeeper's difficulty estimate (1-5)
 
 
 @dataclass

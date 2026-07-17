@@ -506,12 +506,22 @@ Output ONLY a JSON object with this schema:
 
     # -- public API -----------------------------------------------------------
 
-    def review(self, spec: TaskSpec, result: TaskResult) -> ReviewResult:
+    def review(
+        self,
+        spec: TaskSpec,
+        result: TaskResult,
+        artifact_max_per_file: int = 3000,
+        artifact_max_total: int = 16000,
+    ) -> ReviewResult:
         """Audit *result* against *spec*'s acceptance criteria.
 
         Args:
             spec: The original task specification (with acceptance_criteria).
             result: The Worker's delivered result.
+            artifact_max_per_file: Max chars to read per artifact file
+                (default 3000).  # L3-4: deep review raises this to 8000.
+            artifact_max_total: Hard cap on total chars in the artifact
+                contents section (default 16000).  # L3-4
 
         Returns:
             A ``ReviewResult`` with the audit verdict, issues, and evidence.
@@ -603,7 +613,12 @@ Output ONLY a JSON object with this schema:
             )
 
         # ── Build messages ───────────────────────────────────────────────
-        artifact_contents = self._build_artifact_contents(result.artifacts)
+        # L3-4: pass artifact limits through for deep-review support
+        artifact_contents = self._build_artifact_contents(
+            result.artifacts,
+            max_per_file=artifact_max_per_file,
+            max_total=artifact_max_total,
+        )
         # Use manual placeholder replacement instead of .format() to avoid
         # crashes when dynamic content (e.g. Worker results) contains
         # literal { or } characters — .format() would interpret them as

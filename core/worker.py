@@ -25,6 +25,7 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 
 from .protocol import Confidence, TaskResult, TaskSpec, TaskStatus
 from .prompts import extract_json
+from .tool_log import log_tool_call  # L3-2
 
 if TYPE_CHECKING:
     from .console import Console
@@ -492,10 +493,13 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
         tool_call_count = 0
         _artifacts_created: list[str] = []  # track files created during execution
 
+        # L3-6: use per-task budget from spec, fall back to worker default
+        _budget = getattr(spec, 'max_tool_calls', None) or self._max_tool_calls
+
         _API_MAX_RETRIES = 3
         _API_RETRY_DELAY = 2.0  # seconds, doubles each retry
 
-        while tool_call_count < self._max_tool_calls:
+        while tool_call_count < _budget:
             api_attempt = 0
             response = None
             last_api_error = None
@@ -594,6 +598,14 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                         tc.function.name, arguments
                     )
 
+                    # L3-2: deterministic tool-call logging
+                    log_tool_call(
+                        tool_name=tc.function.name,
+                        arguments=arguments,
+                        result_text=result_text,
+                        task_id=spec.task_id,
+                    )
+
                     # Track artifacts for budget-exhaustion preservation
                     if tc.function.name == "write_file" and "path" in arguments:
                         _artifacts_created.append(arguments["path"])
@@ -638,7 +650,7 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
             status=TaskStatus.FAILURE,
             summary="Worker loop exhausted tool-call budget without completing the task.",
             result=(
-                f"Reached max_tool_calls={self._max_tool_calls} "
+                f"Reached max_tool_calls={_budget} "
                 "without receiving a final text response from the LLM."
                 f"{budget_note}"
             ),
