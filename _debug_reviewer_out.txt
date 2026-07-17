@@ -1,2 +1,0 @@
-Step 1 - extract_json return type: list
-Step 1 - extract_json return value: []

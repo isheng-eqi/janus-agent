@@ -1,0 +1,70 @@
+{
+  "evidence_files": [
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\README.md",
+      "summary": "项目首页文档。包含完整的四角色架构图（Gatekeeper→Planner→Worker→Reviewer）、与LangGraph/AutoGen/CrewAI/MetaGPT的对比表、设计哲学声明（'Agent管理Agent应镜像人类管理人类'）、Quick Start示例和核心机制说明（五级审查、指挥官意图、自我修复等）。是推广的核心素材。",
+      "relevance": "直接作为推广的'首页'——任何潜在用户首先阅读的内容。对比表直接回答了'为什么Janus不一样'的核心推广问题。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\docs\\promotion-strategy.md",
+      "summary": "完整的推广策略文档。包含时机分析（arXiv/ChinaXiv路线）、渠道优先级（V2EX/知乎/掘金/B站/Twitter/HN/Reddit分级）、叙事策略（核心Hook、不同渠道版本、回应质疑话术）、具体执行计划（D1-D7/W1-W4/3个月目标）、国企/央企路线的特殊考量、风险控制和推广物料清单。",
+      "relevance": "直接定义了如何推广——渠道、叙事、时间线、物料全部列出。是推广方案的'操作手册'。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\docs\\evidence-chain.md",
+      "summary": "原创证据链完整记录。包括GitHub仓库+8个commit历史、白皮书PDF的SHA256哈希、OpenTimestamps区块链存证（11层深度）、设计文档在首次commit中即存在的证据。附完整文件清单和验证命令。",
+      "relevance": "推广的信心基石——证明了'先做后说'。任何推广内容中引用'有完整密码学证据链'都能大幅提升可信度。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\analysis\\promotion-and-evidence-analysis.md",
+      "summary": "推广方案+证据链综合评估。包含13项已有证据全量盘点（E1-E13）、强弱证据分析（代码完整性🟢充分，时间戳保护🟢充分，外部证据🔴不充分）、证据补充建议（Benchmark套件、跨框架对比、Demo场景、端到端测试）、行动优先级矩阵。明确指出'当前证据链不足以支持大规模推广'。",
+      "relevance": "推广前的'诊断报告'——明确指出了哪些证据充分、哪些缺失。对制定推广策略至关重要。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\docs\\design-philosophy.md",
+      "summary": "设计哲学文档。详细解释了为什么以人类管理为第一设计原则，以及9条已落地的管理规则（指挥官意图、参谋/一线分工、监察长制度、同行评审、缺陷分类、审计线索等）。每条规则都有来自军事/政府/司法/制造/学术的具体映射。",
+      "relevance": "推广叙事的'哲学内核'——回答了'为什么这样设计'。知乎/V2EX长文的核心素材。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\docs\\human-management-patterns.md",
+      "summary": "六领域（军事、政府、企业、司法、制造、学术）管理模式到Agent架构的详细映射文档。包含指挥链、任务式指挥、权力制衡、层级管理、审查标准、质量控制、同行评审等机制的Agent实现。",
+      "relevance": "推广中'跨领域类比'的核心素材——适合在长文中引用具体的管理模式映射。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\docs\\information-flow.md",
+      "summary": "完整信息流全景文档。从用户输入到最终响应的每一层流转细节：Gatekeeper路由决策→Planner目标分解→Worker执行→Reviewer审计→自分解递归路径。包含10个组件的角色、调用关系和参数说明。",
+      "relevance": "技术推广素材——展示架构的严谨性和完整性。适合回答'到底怎么工作的？'类提问。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\docs\\final-verdict.md",
+      "summary": "Hermes Agent双轨独立审计报告。确认17/17 issue全部修复，20/20数据交接点验证通过，5项关键字段（goal/intent/constraints/priority/depth）全链路贯穿无丢失。裁决：✅已生产就绪。",
+      "relevance": "第三方（Hermes Agent）独立质量审计——强于自评。推广时引用'独立审计确认生产就绪'可建立信任。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\check\\validation_result.json",
+      "summary": "自动化交叉验证结果。覆盖9个模块（Gatekeeper、Planner、Worker、Reviewer、Protocol、Infrastructure、Worker Tool System、Data Flow、Design Principles），基于项目文档提取分析。",
+      "relevance": "展示代码质量和架构完整性的量化证据。推广时作为'已经过系统验证'的佐证。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\config.yaml",
+      "summary": "框架配置。展示异构模型支持（Gatekeeper用deepseek-v4-pro推理模型，Worker用deepseek-v4-flash快速模型）、max_depth限制（3层）、max_tool_calls限制（50次）。",
+      "relevance": "推广中展示'配置灵活性'的素材——异构模型分配是区别于竞品的特点。"
+    },
+    {
+      "path": "C:\\Users\\HI\\Desktop\\janus\\docs\\janus-full-summary.md",
+      "summary": "系统全景总结。3800+行核心代码、9个测试文件122个测试用例、四层角色详解、数据流全景、设计原则、已实现功能清单。标注Phase 4生产就绪状态。",
+      "relevance": "推广中'项目规模'的量化证据——3800+行代码、122测试用例、9个模块。"
+    }
+  ],
+  "evidence_types": [
+    "推广策略文档",
+    "架构设计与哲学文档",
+    "密码学证据链（OTS+Git+SHA256）",
+    "独立审计报告（Hermes Agent）",
+    "自动化交叉验证报告",
+    "量化项目规模数据（代码行数/测试用例/模块数）",
+    "竞品对比分析（LangGraph/AutoGen/CrewAI）",
+    "配置与部署文档"
+  ],
+  "analysis": "扫描了Janus项目根目录、docs/、analysis/、check/目录下的所有关键文件。推广相关证据集中在两类：①推广策略本身（promotion-strategy.md、promotion-and-evidence-analysis.md）——包含了完整的渠道、叙事、时间线、物料清单；②推广可引用的证据材料（README.md的设计哲学和对比表、evidence-chain.md的密码学证据、final-verdict.md的独立审计报告、design-philosophy.md的管理学映射等）。\n\n关键发现：\n【充分】内部证据非常充分——代码完整（3800+行）、文档齐全（白皮书+设计哲学+管理模式映射）、时间戳三重保护（Git+OTS+SHA256）、独立审计确认生产就绪、自动化验证覆盖9个模块。\n【不足】外部证据严重缺失——零外部用户/零第三方引用/零实际部署案例、零量化Benchmark数据（无与LangGraph等框架的性能对比）、零学术发表（arXiv/ChinaXiv未完成）。\n【推广就绪度】推广策略本身（渠道、叙事、时间线）已经非常完整且可执行，但promotion-and-evidence-analysis.md明确指出'当前证据链不足以支持大规模推广'——建议先补齐Benchmark和ChinaXiv再启动推广。\n\n推广核心卖点清晰可识别：①'3000年人类管理智慧映射Agent架构'的差异化叙事；②四角色硬边界体系（Gatekeeper/Planner/Worker/Reviewer）；③五级审查（非二元pass/fail）；④指挥官意图传递；⑤自我修复恢复循环；⑥上下文纪律。"
+}
