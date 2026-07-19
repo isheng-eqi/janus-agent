@@ -56,6 +56,33 @@ class DecompositionRequest:
 
 
 @dataclass
+class ExecutionPattern:
+    """Worker 执行模式记录 — 为 Planner 任务分解提供参考。
+
+    每次 Worker 完成一个任务后，将其执行的工具序列、成功/失败、
+    经验教训记录下来。Pattern 库供 Planner 在分解后续任务时参考，
+    以提升分解精准度和工具有效性。
+
+    Attributes:
+        task_type: 任务类型关键词，如 ``"csv_sort"``、``"file_table"``。
+        description: 任务描述原文。
+        tool_sequence: 使用的工具序列，每项包含 name / args_summary / success。
+        success: 执行是否成功。
+        lessons: 经验教训（成功则记录有效模式，失败则记录根因）。
+        timestamp: ISO 8601 时间戳。
+        task_id: 关联的任务 ID。
+    """
+
+    task_type: str
+    description: str
+    tool_sequence: list = field(default_factory=list)
+    success: bool = False
+    lessons: str = ""
+    timestamp: str = ""
+    task_id: str = ""
+
+
+@dataclass
 class TaskResult:
     """The result of a Worker's attempt at a task.
 

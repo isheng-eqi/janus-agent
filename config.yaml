@@ -27,6 +27,7 @@ gatekeeper:
 worker:
   model: "deepseek-v4-flash"     # faster model for task execution
   max_tool_calls: 50         # hard stop after 50 tool invocations per worker
+  context_window: 8192       # LLM context window in tokens (triggers compression at 50%)
 
 # ---------------------------------------------------------------------------
 # janus: framework-level guardrails for the decomposition tree.

@@ -16,14 +16,16 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 import urllib.request
 import urllib.error
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
-from .protocol import Confidence, TaskResult, TaskSpec, TaskStatus
+from .protocol import Confidence, ExecutionPattern, TaskResult, TaskSpec, TaskStatus
 from .prompts import extract_json
 from .tool_log import log_tool_call  # L3-2
 from .planner import calibrate_and_adjust, Planner  # L3 shared calibration + feedback extraction
@@ -227,6 +229,7 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
         registry: ToolRegistry,
         max_tool_calls: int = 50,
         max_depth: int = 3,
+        context_window: int = 8192,
         reviewer: Optional["Reviewer"] = None,
     ) -> None:
         """Create a Worker.
@@ -241,6 +244,10 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                 Beyond this depth the Worker returns FAILURE instead of
                 decomposing further.  Set by the Planner to match its own
                 ``max_depth`` configuration.
+            context_window: Token estimate for context window size.  When
+                the accumulated messages exceed 50% of this threshold the
+                compression routine is triggered (default 8192).  Set to
+                0 to disable compression.
             reviewer: Optional ``Reviewer`` for auditing sub-Worker output
                 during self-decomposition.
         """
@@ -248,6 +255,7 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
         self._registry = registry
         self._max_tool_calls = max_tool_calls
         self._max_depth = max_depth
+        self._context_window = context_window
         self._reviewer = reviewer
 
         # Public attribute — set by Gatekeeper for CLI observability.
@@ -287,11 +295,12 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
         result = self._execute_loop(spec)
 
         if result.status != TaskStatus.NEEDS_DECOMPOSITION:
+            self._record_pattern(spec, result)
             return result
 
         # --- depth guard -----------------------------------------------------
         if spec.depth >= self._max_depth:
-            return TaskResult(
+            depth_result = TaskResult(
                 status=TaskStatus.FAILURE,
                 summary=(
                     f"Depth limit reached (depth={spec.depth}, "
@@ -303,15 +312,19 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                 ),
                 confidence=Confidence.LOW,
             )
+            self._record_pattern(spec, depth_result)
+            return depth_result
 
         # --- self-decompose: execute each sub-task recursively ---------------
         if result.decomposition_request is None or not result.decomposition_request.sub_tasks:
-            return TaskResult(
+            decomp_fail = TaskResult(
                 status=TaskStatus.FAILURE,
                 summary="NEEDS_DECOMPOSITION returned without valid decomposition_request.",
                 result="decomposition_request is missing or has empty sub_tasks.",
                 confidence=Confidence.LOW,
             )
+            self._record_pattern(spec, decomp_fail)
+            return decomp_fail
 
         sub_results: list[TaskResult] = []
         for sub in result.decomposition_request.sub_tasks:
@@ -465,17 +478,19 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                 resume_spec.task_id,
                 resume_spec.description[:50] if resume_spec.description else "",
             )
-            return TaskResult(
+            resume_fail = TaskResult(
                 status=TaskStatus.FAILURE,
                 summary="Resume spec failed validation: empty task_id or description.",
                 result="Could not build a valid resume TaskSpec after self-decomposition.",
                 confidence=Confidence.LOW,
             )
+            self._record_pattern(spec, resume_fail)
+            return resume_fail
         final_result = self._execute_loop(resume_spec)
 
         # --- guard: only one self-decomposition per task ---------------------
         if final_result.status == TaskStatus.NEEDS_DECOMPOSITION:
-            return TaskResult(
+            second_decomp = TaskResult(
                 status=TaskStatus.FAILURE,
                 summary=(
                     "Worker attempted a second self-decomposition after resume. "
@@ -488,7 +503,10 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                 ),
                 confidence=Confidence.LOW,
             )
+            self._record_pattern(spec, second_decomp)
+            return second_decomp
 
+        self._record_pattern(spec, final_result)
         return final_result
 
     def _execute_loop(self, spec: TaskSpec) -> TaskResult:
@@ -584,8 +602,7 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                             "retrying in %.1fs: %s",
                             api_attempt, _API_MAX_RETRIES, delay, exc,
                         )
-                        import time as _time
-                        _time.sleep(delay)
+                        time.sleep(delay)
                     else:
                         return TaskResult(
                             status=TaskStatus.FAILURE,
@@ -690,6 +707,9 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
                         }
                     )
 
+                # ── context compression check ──────────────────────────
+                messages = self._compress_context(messages)
+
                 continue  # back to LLM
 
             # -- Branch: LLM returned text content → parse as TaskResult -----
@@ -761,6 +781,71 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
             prompt += guidance
 
         return prompt
+
+    def _compress_context(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Compress old message rounds when context approaches the window limit.
+
+        Strategy (simplified, no LLM summarisation):
+          1. Retain the system prompt (index 0) unchanged.
+          2. Retain the last 3 complete rounds (6 messages: 3 assistant + 3 tool).
+          3. For older rounds, truncate each tool-result ``content`` to 300
+             characters and prefix with ``[已压缩] `` so the LLM knows the
+             output was abbreviated.
+          4. Assistant messages (containing ``tool_calls``) are kept intact
+             because ``function.name`` / ``arguments`` are short.
+
+        Args:
+            messages: The full message list accumulated so far.
+
+        Returns:
+            A new list with truncated older tool outputs (or the original
+            list unchanged if no compression was needed).
+        """
+        if self._context_window <= 0:
+            return messages  # compression disabled
+
+        # Rough token estimate: chars / 2
+        total_chars = sum(len(str(m.get("content", "")) or "") for m in messages)
+        estimated_tokens = total_chars // 2
+
+        if estimated_tokens < self._context_window * 0.5:
+            return messages  # under threshold — nothing to do
+
+        # We need at least: 1 system + user msg (0,1) + 6 retained = 8 msgs
+        if len(messages) < 8:
+            return messages  # too few messages to benefit from compression
+
+        # Separate: system prompt, recent window, compressible middle
+        system_lock = messages[:1]          # index 0 only — system prompt
+        recent_count = 6                     # last 3 rounds
+        recent_lock = messages[-recent_count:] if len(messages) > recent_count else messages[1:]
+        middle = messages[1:-recent_count]   # the compressible segment
+
+        compressed_middle: list[dict[str, Any]] = []
+        for m in middle:
+            role = m.get("role", "")
+            if role == "tool":
+                content = str(m.get("content", ""))
+                if len(content) > 300:
+                    content = "[已压缩] " + content[:300]
+                compressed_middle.append({**m, "content": content})
+            else:
+                # assistant messages (with tool_calls) kept intact
+                compressed_middle.append(m)
+
+        result = system_lock + compressed_middle + recent_lock
+
+        old_tokens = estimated_tokens
+        new_chars = sum(len(str(m.get("content", "")) or "") for m in result)
+        new_tokens = new_chars // 2
+        logger.info(
+            "Worker context compressed: %d→%d estimated tokens "
+            "(threshold=%d, window=%d)",
+            old_tokens, new_tokens,
+            int(self._context_window * 0.5), self._context_window,
+        )
+
+        return result
 
     @staticmethod
     def _format_sub_results(sub_results: list[TaskResult]) -> str:
@@ -973,6 +1058,90 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
             confidence=Confidence.LOW,
             sub_review_failed=True,
         )
+
+    def _record_pattern(self, spec: TaskSpec, result: TaskResult) -> None:
+        """Record the execution pattern for a completed task.
+
+        Writes a JSON file under ``janus/patterns/`` with the tool-call
+        sequence, success/failure status, and lessons learned.  The pattern
+        library is used by the Planner to improve future task decomposition.
+
+        Args:
+            spec: The TaskSpec that was executed.
+            result: The TaskResult produced by execution.
+        """
+        # Derive a task-type keyword from the description
+        task_type = spec.description[:80].strip().replace(" ", "_").replace("\n", "_")[:60]
+
+        # Read back this task's tool log to extract the actual tool sequence
+        log_dir = os.path.join(os.path.dirname(__file__), "..", "tool_logs")
+        log_path = os.path.join(log_dir, f"{spec.task_id}.jsonl")
+        tool_sequence: list[dict] = []
+        if os.path.isfile(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8") as lf:
+                    for line in lf:
+                        try:
+                            entry = json.loads(line)
+                            tool_sequence.append({
+                                "name": entry.get("tool_name", "?"),
+                                "args_summary": str(entry.get("arguments", {}))[:200],
+                                "success": True,  # tool didn't crash
+                            })
+                        except json.JSONDecodeError:
+                            pass
+            except Exception as exc:
+                logger.debug("_record_pattern: could not read tool log %s: %s", log_path, exc)
+
+        # Build lessons from the result
+        if result.status == TaskStatus.SUCCESS:
+            lessons = (
+                f"SUCCESS — task completed with {len(tool_sequence)} tool calls. "
+                f"Summary: {result.summary}"
+            )
+        else:
+            lessons = (
+                f"FAILURE — {result.status.value}. "
+                f"Summary: {result.summary}. Root cause: {result.result[:300]}"
+            )
+
+        pattern = ExecutionPattern(
+            task_type=task_type,
+            description=spec.description,
+            tool_sequence=tool_sequence,
+            success=(result.status == TaskStatus.SUCCESS),
+            lessons=lessons,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            task_id=spec.task_id,
+        )
+
+        # Write to janus/patterns/
+        patterns_dir = os.path.join(os.path.dirname(__file__), "..", "patterns")
+        os.makedirs(patterns_dir, exist_ok=True)
+        safe_task_type = task_type.replace("/", "_").replace("\\", "_")
+        safe_task_id = spec.task_id.replace("/", "_").replace("\\", "_")
+        pattern_path = os.path.join(
+            patterns_dir, f"{safe_task_id}_{safe_task_type}.json"
+        )
+        try:
+            with open(pattern_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "task_type": pattern.task_type,
+                        "description": pattern.description,
+                        "tool_sequence": pattern.tool_sequence,
+                        "success": pattern.success,
+                        "lessons": pattern.lessons,
+                        "timestamp": pattern.timestamp,
+                        "task_id": pattern.task_id,
+                    },
+                    f,
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            logger.info("_record_pattern: wrote %s", pattern_path)
+        except Exception as exc:
+            logger.warning("_record_pattern: failed to write %s: %s", pattern_path, exc)
 
     @staticmethod
     def _parse_result(text: str) -> TaskResult:

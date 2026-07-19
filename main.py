@@ -177,6 +177,7 @@ def main() -> None:
             "Set it to your DeepSeek API key (or use ${DEEPSEEK_API_KEY})."
         )
     max_tool_calls = cfg.get("worker", {}).get("max_tool_calls", 50)
+    context_window = cfg.get("worker", {}).get("context_window", 8192)
     max_depth = cfg.get("janus", {}).get("max_depth", 3)
 
     # -- 2.5. Parse CLI flags ─────────────────────────────────────────
@@ -230,6 +231,7 @@ def main() -> None:
             api_key=api_key,
             registry=registry,
             max_tool_calls=max_tool_calls,
+            context_window=context_window,
             reviewer=reviewer,
         )
 
