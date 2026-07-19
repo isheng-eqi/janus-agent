@@ -388,14 +388,14 @@ while tool_call_count < 50:
 | `read_file` | `_real_read_file` | 读文件 | 50,000 字符/次 |
 | `write_file` | `_real_write_file` | 写文件（自动创建目录） | 无 |
 | `terminal` | `_real_terminal` | subprocess 执行 shell | 60 秒超时 |
-| `web_search` | `_real_web_search` | ⚠ 占位符 | — |
+| `web_search` | `_real_web_search` | ✅ DuckDuckGo（ddgs） | 10 结果/次 |
 | `web_extract` | `_real_web_extract` | HTTP GET + 去 HTML | 3,000 字符/URL |
 | `search_files` | `_real_search_files` | glob + 内容搜索 | 最多 50 结果 |
 | `patch` | `_real_patch` | 查找替换（首次出现） | 无 |
 | `execute_code` | `_real_execute_code` | exec() 执行 Python | 受限内置命名空间 |
-| `browser_navigate` | `_real_browser_navigate` | ⚠ 占位符 | — |
+| `browser_navigate` | `_real_browser_navigate` | ✅ Playwright headless Chromium | 30s 超时 |
 
-**参数别名映射**（`worker.py:72-86`）：LLM 可能用不同的参数名，注册表自动映射到规范名称。例如 `"command"` → `"cmd"`、`"filename"` → `"path"`。
+**参数别名映射**（`worker.py:78-91`）：LLM 可能用不同的参数名，注册表自动映射到规范名称。例如 `"filename"` → `"path"`、`"q"` → `"query"`。注意：别名必须映射到函数签名的规范参数名，否则被 `inspect.signature` 过滤后会传入空参数导致崩溃——`"command" → "cmd"` 曾在 2026-07-19 引发 `terminal` 工具 100% 崩溃。
 
 #### 3.4 解析 Worker 输出
 

@@ -514,6 +514,151 @@ right granularity so each sub-task can be executed independently by a Worker."""
         lines.append("")
         return "\n".join(lines) + "\n"
 
+    # Phase 2: pattern-library-driven decomposition
+    # -----------------------------------------------------------
+
+    _STOPWORDS: set[str] = {
+        "的", "是", "在", "了", "和", "等", "我", "你", "他", "她", "它",
+        "the", "a", "an", "is", "in", "on", "of", "to", "for", "and",
+        "with", "that", "this", "from", "by", "at", "or", "as", "be",
+        "也", "就", "都", "把", "被", "对", "与", "及", "所", "而",
+    }
+
+    def _load_relevant_patterns(
+        self, user_goal: str, limit: int = 3
+    ) -> list[dict]:
+        """Load historical execution patterns relevant to *user_goal*.
+
+        Searches ``janus/patterns/`` for JSON pattern files, scores each
+        by keyword overlap with *user_goal*, and returns the top-*limit*
+        matches.  Empty patterns are silently filtered.
+
+        Args:
+            user_goal: The user's goal text to match against.
+            limit: Max number of patterns to return (default 3).
+
+        Returns:
+            List of pattern dicts (same shape as the JSON on disk), or
+            an empty list when no patterns exist or none match.
+        """
+        patterns_dir = os.path.join(
+            os.path.dirname(__file__), "..", "patterns"
+        )
+        if not os.path.isdir(patterns_dir):
+            return []
+
+        try:
+            all_files = os.listdir(patterns_dir)
+        except OSError:
+            return []
+
+        json_files = [f for f in all_files if f.endswith(".json")]
+        if not json_files:
+            return []
+
+        # Performance guard: too many files → recent-first limit
+        if len(json_files) > 50:
+            json_files.sort(
+                key=lambda f: os.path.getmtime(
+                    os.path.join(patterns_dir, f)
+                ),
+                reverse=True,
+            )
+            json_files = json_files[:20]
+
+        # Extract keywords from user_goal
+        import re as _re
+
+        goal_lower = user_goal.lower()
+        raw_tokens: list[str] = []
+        for chunk in _re.split(r'[\s,.;:!?()\[\]{}/\\]+', goal_lower):
+            chunk = chunk.strip("。！？；：、，「」『』\"'`")
+            if chunk:
+                raw_tokens.append(chunk)
+
+        # For CJK text, also try character bigrams as tokens
+        cjk_tokens: set[str] = set()
+        for token in raw_tokens:
+            if any('\u4e00' <= c <= '\u9fff' for c in token):
+                for i in range(len(token) - 1):
+                    cjk_tokens.add(token[i:i + 2])
+        raw_tokens.extend(cjk_tokens)
+
+        goal_keywords: set[str] = {
+            t for t in raw_tokens
+            if t and t not in self._STOPWORDS and len(t) >= 2
+        }
+        if not goal_keywords:
+            return []
+
+        # Score each pattern
+        scored: list[tuple[int, dict]] = []
+        for fname in json_files:
+            fpath = os.path.join(patterns_dir, fname)
+            try:
+                with open(fpath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                logger.debug(
+                    "_load_relevant_patterns: skipping unreadable %s",
+                    fname,
+                )
+                continue
+
+            success = data.get("success", False)
+            lessons = data.get("lessons", "")
+
+            # Skip failed patterns with no lessons (no value)
+            if not success and not lessons:
+                continue
+
+            desc = data.get("description", "")
+            task_type = data.get("task_type", "")
+            combined = f"{desc} {task_type}".lower()
+
+            score = sum(1 for kw in goal_keywords if kw in combined)
+            if score > 0:
+                scored.append((score, data))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [item[1] for item in scored[:limit]]
+
+    def _build_patterns_section(self, patterns: list[dict]) -> str:
+        """Format historical execution patterns into a prompt injection.
+
+        Produces a markdown section suitable for prepending to the
+        decomposition prompt in :meth:`_plan`.
+        """
+        if not patterns:
+            return ""
+
+        lines: list[str] = [
+            "\n## 历史执行模式参考",
+            "",
+            "以下是与当前任务相似的历史执行经验，请参考其中的工具序列和教训：",
+            "",
+        ]
+        for i, p in enumerate(patterns, 1):
+            success_marker = "成功" if p.get("success") else "失败"
+            tools = [t.get("name", "?") for t in p.get("tool_sequence", [])]
+            tools_str = ", ".join(tools) if tools else "(无工具调用)"
+            desc = p.get("description", "?")
+            lessons = p.get("lessons", "")
+            success_status = "是" if p.get("success") else "否"
+
+            lines.append(f"模式 {i}（{success_marker}）：")
+            lines.append(f"- 任务描述：{desc}")
+            lines.append(f"- 使用的工具：{tools_str}")
+            lines.append(f"- 经验教训：{lessons}")
+            lines.append(f"- 成功：{success_status}")
+
+            if not p.get("success") and lessons:
+                lines.append("  ⚠️ 注意避免相同错误")
+
+            lines.append("")
+
+        return "\n".join(lines) + "\n"
+
     def _plan(self, directive: Directive) -> list[TaskSpec]:
         """Call the LLM to break *directive* into discrete ``TaskSpec`` items.
 
@@ -551,6 +696,13 @@ right granularity so each sub-task can be executed independently by a Worker."""
                 "content": (
                     # FEEDFORWARD-LOOP: 注入上次审查反馈，改进分解策略
                     self._build_feedback_section()
+                    +
+                    # Phase 2: 注入历史执行模式，提供工具序列和教训参考
+                    self._build_patterns_section(
+                        self._load_relevant_patterns(
+                            directive.user_goal or directive.goal
+                        )
+                    )
                     +
                     "Decompose the following goal into a JSON array of task "
                     "objects. Each task object must have:\n"

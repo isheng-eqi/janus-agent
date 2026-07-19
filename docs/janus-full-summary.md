@@ -395,12 +395,12 @@ Janus 是一个**分层递归任务分解 Agent 框架**。核心理念：**Agen
 | 1 | `read_file` | `_real_read_file` | 读取文件内容 | 5,000 字符截断 |
 | 2 | `write_file` | `_real_write_file` | 写入文件（自动创建父目录） | 无 |
 | 3 | `terminal` | `_real_terminal` | `subprocess` 执行 shell 命令 | 60 秒超时 |
-| 4 | `web_search` | `_real_web_search` | ⚠️ 占位符 — 需 DuckDuckGo/SerpAPI | — |
+| 4 | `web_search` | `_real_web_search` | ✅ DuckDuckGo 搜索（ddgs 包，免费，无需 API key） | 10 结果/次 |
 | 5 | `web_extract` | `_real_web_extract` | HTTP GET + 去 HTML 标签 | 3,000 字符/URL，最多 5 URL |
 | 6 | `search_files` | `_real_search_files` | glob + 内容搜索 | 最多 50 结果 |
 | 7 | `patch` | `_real_patch` | 首次匹配替换 | 无 |
 | 8 | `execute_code` | `_real_execute_code` | `exec()` 执行 Python | 受限 builtins 命名空间 |
-| 9 | `browser_navigate` | `_real_browser_navigate` | ⚠️ 占位符 — 需 Playwright | — |
+| 9 | `browser_navigate` | `_real_browser_navigate` | ✅ Playwright headless Chromium（复用 Hermes Chrome） | 30s 超时 |
 
 ---
 
@@ -665,9 +665,44 @@ python main.py --quiet
 - `_extract_json()` 在 Gatekeeper 和 Planner 中重复（现已提取到 prompts.py）
 - `balanced`/`normal` priority 无 Worker 行为指引条目
 - 子审查重试无逐次 Console 输出
-- `web_search` 和 `browser_navigate` 为占位符
+- `web_search` 和 `browser_navigate` 已从占位符升级为真实实现（ddgs + Playwright，2026-07-19）
 - `Gatekeeper._respond()` 不含 `context_discipline_prompt`（设计选择，非 bug）
 
 ---
 
-> *本文档基于 Janus Phase 4 完整源码（`core/` 10 个源文件 + `main.py`，总计约 4,275 行）及全部设计文档。*
+## 11. Phase 1 自进化（2026-07-19）
+
+受 Hermes 7 层自进化体系启发，将可直接迁移的两层落地到 Janus Worker。
+
+### L5 上下文压缩
+
+Worker 的 `_execute_loop` 在消息 token 估算超过 `context_window * 50%` 时自动触发。三明治策略简化版：保留 system prompt + 最近 3 轮完整对话，中间旧轮次的 tool 结果截断到 300 字符并加 `[已压缩]` 标记。
+
+- **配置**：`config.yaml` 中 `worker.context_window`（默认 8192，设为 0 禁用）
+- **实现**：`worker.py` — `_compress_context()` 方法 + 循环中检查点
+- **文件改动**：`worker.py`、`config.yaml`、`main.py`
+
+### L1 执行模式库
+
+Worker 完成任务后自动从 `tool_logs/{task_id}.jsonl` 回读工具序列，构造 `ExecutionPattern` 写入 `patterns/{task_id}_{task_type}.json`。
+
+- **协议**：`protocol.py` 新增 `ExecutionPattern` dataclass（task_type/description/tool_sequence/success/lessons）
+- **覆盖**：Worker 的 6 个 return 路径全覆盖
+- **隔离**：`patterns/` 已加入 `.gitignore`
+- **Phase 2 预告**：Planner 端加载相关模式指导分解（留到 Phase 2，需要跨任务身份）
+
+### 架构边界
+
+Phase 1 刻意不破坏 Worker "临时兵"假设——Worker 只生产模式，不消费模式。Planner 消费时才需要跨任务身份，那才是真正的架构改造点。
+
+### Hermes → Janus 迁移对照
+
+| Hermes 层 | Janus 迁移 | 状态 |
+|-----------|-----------|------|
+| L1 Skill/Prompt 创建 | 执行模式库 | ✅ Phase 1 |
+| L4 Memory 跨任务 | — | ❌ 不适合（Worker 临时实例） |
+| L5 上下文压缩 | `_compress_context()` | ✅ Phase 1 |
+| L6 背景反思 | 计划 Phase 2 | 📋 待定 |
+| L7 GEPA 外部进化 | — | ❌ 不适合（架构级差异） |
+
+> *本文档基于 Janus Phase 4 + Phase 1 自进化完整源码（`core/` 10 个源文件 + `main.py`）及全部设计文档。*
