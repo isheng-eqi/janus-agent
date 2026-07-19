@@ -21,10 +21,10 @@ from core.console import (
     _qing,
     _zhu,
     _jin,
+    _nongmo,
     _danmo,
     set_no_color,
 )
-from core._unicode import supports_unicode
 from core.gatekeeper import Gatekeeper
 from core.planner import Planner
 from core.reviewer import Reviewer
@@ -257,38 +257,22 @@ def main() -> None:
     session = Session(gk)
 
     # -- 5. REPL loop -----------------------------------------------------
-    # 纯 box-drawing 大字启动画面（参考 Hermes 风格）—— 无框，6 行高
-    # 不加 ANSI 颜色，靠字符密度形成视觉冲击
-    if supports_unicode():
-        _JANUS_LOGO = '\n' + '\n'.join([
-            '█████╗ █████╗ ███╗   ██╗██╗   ██╗███████╗',
-            '╚══██║██╔══██╗████╗  ██║██║   ██║██╔════╝',
-            '   ██║███████║██╔██╗ ██║██║   ██║███████╗',
-            '   ██║██╔══██║██║╚██╗██║██║   ██║╚════██║',
-            '██╗██║██║  ██║██║ ╚████║╚██████╔╝███████║',
-            '╚████╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝',
-        ])
-    else:
-        _JANUS_LOGO = '\n' + '\n'.join([
-            '    _   _   _   _   ____',
-            '   | | / \\ | \\ | | | / ___|',
-            ' _ | |/ _ \\|  \\| | | \\___ \\',
-            '| |_| / _ \\| |\\  | |_| |___) |',
-            ' \\___/  \\_/ |_| \\_|\\___|____/',
-            '                                 ',
-        ])
+    # 太极启动画面：名号悬浮 → 配置淡墨 → 金提示符
+    # 四行含空行：阴·阳·阴·阳·阴·阳
     _WELCOME = (
-        f'{_JANUS_LOGO}\n'
+        f"\n{_nongmo('Janus')}\n"
+        f"\n"
+        f"{_danmo(f'{gatekeeper_model}  |  {len(registry)} 工具')}\n"
     )
     _HELP_TEXT = (
-        f'{_JANUS_LOGO}\n'
-        f'\n'
-        f'自然语言描述目标，Janus 自行拆解执行\n'
-        f'\n'
-        f'  > 帮我写一个排序 CSV 的 Python 脚本\n'
-        f'  > 在 ./my-app 下创建 README.md\n'
-        f'\n'
-        f'{_danmo("输入 quit 退出，--verbose 查看细节")}\n'
+        f"\n{_nongmo('Janus')}\n"
+        f"\n"
+        f"自然语言描述目标，Janus 自行拆解执行。\n"
+        f"\n"
+        f"  > 帮我写一个排序 CSV 的 Python 脚本\n"
+        f"  > 在 ./my-app 下创建 README.md\n"
+        f"\n"
+        f"{_danmo('输入 quit 退出，--verbose 查看细节。')}\n"
     )
 
     # Suppress the big ASCII-art welcome in quiet mode — it breaks the
@@ -298,8 +282,7 @@ def main() -> None:
 
     while True:
         try:
-            prompt = f"{_jin('❯')} "
-            user_input = input(prompt)
+            user_input = input(f"\n{_jin('❯')} ")
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n{_danmo('再见')}")
             break
