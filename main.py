@@ -265,14 +265,11 @@ def main() -> None:
     # 用原始无色文本计算填充——ANSI 转义序列不计入视觉宽度
     _pad1 = ' ' * (_box_w - len('  JAN  │  US'))
     _pad2 = ' ' * (_box_w - len(f'       {_diamond}'))
-    _pad3 = ' ' * (_box_w - len(f'  past {_diamond} present {_diamond} future'))
     _welcome_box = (
         f'{Symbols.TOP_L}{Symbols.HLINE * _box_w}{Symbols.TOP_R}\n'
         f'{Symbols.VLINE}  {_nongmo("JAN")}  {Symbols.VLINE}  '
         f'{_danmo("US")}{_pad1}{Symbols.VLINE}\n'
         f'{Symbols.VLINE}       {_diamond}{_pad2}{Symbols.VLINE}\n'
-        f'{Symbols.VLINE}  past {_diamond} present {_diamond} future'
-        f'{_pad3}{Symbols.VLINE}\n'
         f'{Symbols.BOT_L}{Symbols.HLINE * _box_w}{Symbols.BOT_R}'
     )
     _WELCOME = (
