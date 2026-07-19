@@ -14,7 +14,7 @@
 | GitHub | https://github.com/isheng-eqi |
 | 邮箱 | ishengeqi@163.com |
 | GPG | EF63540BC26249C7 |
-| 项目仓库 | https://github.com/isheng-eqi/janus |
+| 项目仓库 | https://github.com/isheng-eqi/janus-agent |
 
 ---
 
@@ -24,14 +24,14 @@
 
 | 属性 | 值 |
 |------|-----|
-| 仓库 URL | https://github.com/isheng-eqi/janus |
+| 仓库 URL | https://github.com/isheng-eqi/janus-agent |
 | 首次公开提交 | 2026-07-17 12:31 UTC+8 |
 | 首次提交 Hash | `ae0f905698d4daea8d949c0e3cf165350c62ed95` |
 | 提交信息 | "Initial public release: Janus hierarchical multi-agent framework" |
 
 验证方法：
 ```bash
-git clone https://github.com/isheng-eqi/janus.git
+git clone https://github.com/isheng-eqi/janus-agent.git
 cd janus
 git log --reverse --format="%H %ai %s" | head -1
 ```
@@ -76,7 +76,7 @@ ots verify paper/janus_whitepaper.pdf.ots     # 再次验证
 |------|-----|
 | 记录文件 | `paper/janus_whitepaper.sha256.json` |
 | 记录时间 | 2026-07-17 12:48:41 UTC+8 |
-| GitHub blob URL | https://github.com/isheng-eqi/janus/blob/master/paper/janus_whitepaper.sha256.json |
+| GitHub blob URL | https://github.com/isheng-eqi/janus-agent/blob/master/paper/janus_whitepaper.sha256.json |
 
 记录内容：
 ```json
@@ -86,7 +86,7 @@ ots verify paper/janus_whitepaper.pdf.ots     # 再次验证
   "timestamp_utc": "2026-07-17T04:48:41Z",
   "timestamp_local": "2026-07-17 12:48:41",
   "size_bytes": 259290,
-  "github_repo": "https://github.com/isheng-eqi/janus"
+  "github_repo": "https://github.com/isheng-eqi/janus-agent"
 }
 ```
 
@@ -123,7 +123,7 @@ ots verify paper/janus_whitepaper.pdf.ots     # 再次验证
 | 事项 | 说明 | 优先级 |
 |------|------|--------|
 | OTS 升级 | 需在 Linux/WSL 中运行 `ots upgrade` 将 PendingAttestation 升级为比特币区块锚定 | 中 |
-| archive.org 存档 | 手动提交 https://github.com/isheng-eqi/janus 到 web.archive.org/save | 低 |
+| archive.org 存档 | 手动提交 https://github.com/isheng-eqi/janus-agent 到 web.archive.org/save | 低 |
 | arXiv 提交 | 需机构邮箱 + endorser | 低 |
 | 公证处存证 | 约 500 元，最高司法证明力 | 极低 |
 

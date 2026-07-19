@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python 3.10+"></a>
-  <a href="https://github.com/isheng-eqi/janus"><img src="https://img.shields.io/badge/Status-Active-brightgreen.svg" alt="Status: Active"></a>
+  <a href="https://github.com/isheng-eqi/janus-agent"><img src="https://img.shields.io/badge/Status-Active-brightgreen.svg" alt="Status: Active"></a>
 </p>
 
 ---
@@ -89,7 +89,7 @@ Existing agent frameworks are designed around **what LLMs can do**. Janus is des
 
 ```bash
 # 1. Clone
-git clone https://github.com/isheng-eqi/janus.git
+git clone https://github.com/isheng-eqi/janus-agent.git
 cd janus
 
 # 2. Install dependencies
