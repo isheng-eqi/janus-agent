@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -298,7 +299,13 @@ def main() -> None:
 
     while True:
         try:
-            user_input = input(f"\n{_danmo(f'{gatekeeper_model}  |  {len(registry)} 工具')}\n{_jin('❯')} ")
+            line_w = max(40, int(shutil.get_terminal_size().columns * 0.8))
+            user_input = input(
+                f"\n\n"
+                f"{_danmo(f'{gatekeeper_model}  |  {len(registry)} 工具')}\n"
+                f"{_danmo('─' * line_w)}\n"
+                f"{_jin('❯')} "
+            )
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n{_danmo('再见')}")
             break
