@@ -76,7 +76,6 @@ class ToolDef:
 _PARAM_ALIASES: dict[str, str] = {
     "url": "target_url",
     "endpoint": "target_url",
-    "command": "cmd",
     "shell": "cmd",
     "prompt": "payload",
     "text": "payload",
@@ -1041,6 +1040,9 @@ def _real_read_file(path: str, offset: int = 1, limit: int = 50000) -> str:
         _real_read_file("large.py", offset=1, limit=10000)   # first 10k chars
         _real_read_file("large.py", offset=50001, limit=50000)  # next 50k chars
     """
+    # Type guard: LLM may pass strings for offset/limit
+    offset = int(offset) if isinstance(offset, str) else offset
+    limit = int(limit) if isinstance(limit, str) else limit
     try:
         # Read the entire file as text, then slice at character position.
         # Using f.seek() on text mode is not portable (undefined for non-zero
@@ -1384,6 +1386,7 @@ def _real_execute_code(code: str) -> str:
         # Allow imports of stdlib modules (json, re, math, etc.)
         "__import__",
         # Allow common exceptions/types
+        "compile",
         "Exception", "ValueError", "TypeError", "KeyError", "IndexError",
         "AttributeError", "RuntimeError", "StopIteration", "ImportError",
         "OSError", "FileNotFoundError", "PermissionError", "ZeroDivisionError",
