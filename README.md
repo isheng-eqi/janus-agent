@@ -1,22 +1,21 @@
+  █████╗ █████╗ ███╗   ██╗██╗   ██╗███████╗
+  ╚══██║██╔══██╗████╗  ██║██║   ██║██╔════╝
+     ██║███████║██╔██╗ ██║██║   ██║███████╗
+     ██║██╔══██║██║╚██╗██║██║   ██║╚════██║
+  ██╗██║██║  ██║██║ ╚████║╚██████╔╝███████║
+  ╚████╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝
+        past  ◆  present  ◆  future
+
+
 # Janus
 
-<p align="center">
-  <h3 align="center">Human Management Wisdom → Agent Architecture</h3>
-</p>
-
-<p align="center">
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
-  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python 3.10+"></a>
-  <a href="https://github.com/isheng-eqi/janus-agent"><img src="https://img.shields.io/badge/Status-Active-brightgreen.svg" alt="Status: Active"></a>
-</p>
-
----
+*Human Management Wisdom → Agent Architecture*
 
 **Janus is not another agent framework. It's a design philosophy that asks: "How do humans manage humans?" — then maps the answer to LLM agents.**
 
 Most frameworks give you tools to build agents. Janus gives you a **management system** for agents — four specialized roles with hard boundaries, inherited from 3,000+ years of human organizational wisdom: military command chains, judicial review standards, manufacturing quality control, academic peer review.
 
----
+
 
 ## Why Janus Exists
 
@@ -31,9 +30,9 @@ Existing agent frameworks are designed around **what LLMs can do**. Janus is des
 
 **Janus's insight:** LLM agents suffer from the same structural problems as human organizations — task decomposition quality varies, outputs deviate from intent, failures cascade silently, and there's no independent audit. Humans solved these problems with **hierarchical management, independent review, graded escalation, and context discipline**. Janus applies those solutions directly.
 
----
 
 ## Architecture
+
 
 ```
                          ┌─────────────────────────────────────────┐
@@ -81,6 +80,7 @@ Existing agent frameworks are designed around **what LLMs can do**. Janus is des
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+
 **Four roles. Hard boundaries. No overlap.**
 
 ---
@@ -96,7 +96,7 @@ cd janus
 pip install pyyaml colorama openai
 
 # 3. Set your DeepSeek API key
-echo 'DEEPSEEK_API_KEY=sk-your-key-here' > .env
+echo 'DEEPSEEK_API_KEY=«redacted:sk-…»' > .env
 
 # 4. Run
 python main.py
@@ -114,9 +114,8 @@ Gatekeeper → Planner → Workers → Reviewer → Report
 产出文件: ./output/sort_csv.py
 ```
 
-> **Requirements:** Python 3.10+, DeepSeek API key. See [config.yaml](config.yaml) for advanced configuration (heterogeneous models, max depth, tool limits).
+*Requirements: Python 3.10+, DeepSeek API key. See [config.yaml](config.yaml) for advanced configuration (heterogeneous models, max depth, tool limits).*
 
----
 
 ## Core Mechanisms
 
@@ -138,7 +137,6 @@ Gatekeeper → Planner → Workers → Reviewer → Report
 
 **Context Discipline** — Every role sees only what it needs. The Gatekeeper never sees Worker tool-call logs. The Reviewer never sees strategic intent that would bias its audit. Inherited from management's "span of control" — humans can't process everything, and neither can LLM context windows.
 
----
 
 ## Design Philosophy
 
@@ -146,32 +144,18 @@ Gatekeeper → Planner → Workers → Reviewer → Report
 >
 > This is not a metaphor. It's Janus's first design principle.
 
-Every design decision starts with one question: *"How do human organizations solve this?"* — not "What's the most efficient technical solution?"
+*Every design decision starts with one question: "How do human organizations solve this?" — not "What's the most efficient technical solution?"*
 
-- **Military command chains** → Gatekeeper → Planner → Worker hierarchy
-- **Judicial review standards** → Five-level graded verdicts (not binary pass/fail)
-- **Manufacturing quality control** → Three lines of defense, four-level defect severity
-- **Academic peer review** → Independent Reviewer, desk reject, revision-and-resubmit
-- **Commander's Intent** → `TaskSpec.intent` — know WHY, not just WHAT
-- **Span of Control** → Context discipline — each role sees exactly what it needs
+- Military command chains → Gatekeeper → Planner → Worker hierarchy
+- Judicial review standards → Five-level graded verdicts (not binary pass/fail)
+- Manufacturing quality control → Three lines of defense, four-level defect severity
+- Academic peer review → Independent Reviewer, desk reject, revision-and-resubmit
+- Commander's Intent → `TaskSpec.intent` — know WHY, not just WHAT
+- Span of Control → Context discipline — each role sees exactly what it needs
 
-We have 3,000+ years of organizational wisdom. Janus applies it to LLMs.
+*We have 3,000+ years of organizational wisdom. Janus applies it to LLMs.*
+[Read the full philosophy →](docs/design-philosophy.md)
 
-Read the full philosophy: [docs/design-philosophy.md](docs/design-philosophy.md)
-
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [**Whitepaper (PDF)**](paper/janus_whitepaper.pdf) | Full technical whitepaper — architecture, mechanisms, evaluation, comparison |
-| [**Whitepaper (Chinese)**](paper/janus_whitepaper_zh.html) | 中文版白皮书 |
-| [**Design Philosophy**](docs/design-philosophy.md) | Why human management patterns, and how they map to Janus |
-| [**Human Management Patterns**](docs/human-management-patterns.md) | Deep dive into 6 organizational domains and their agent mappings |
-| [**config.yaml**](config.yaml) | Configuration reference — models, depth limits, tool caps |
-
----
 
 ## How Janus Differs
 
@@ -185,28 +169,29 @@ Read the full philosophy: [docs/design-philosophy.md](docs/design-philosophy.md)
 | **Context management** | Full history or manual pruning | Role-based context discipline — each role sees only its layer |
 | **Intent alignment** | Implicit | Explicit: immutable user_goal anchor + pre-delivery validation |
 
----
 
-## Contributing
-
-Janus is in active development. Contributions are welcome!
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests (`pytest tests/`)
-5. Submit a Pull Request
-
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
----
-
-## License
-
-MIT © 2026 — See [LICENSE](LICENSE) for details.
-
----
-
-<p align="center">
-  <sub>Built on the insight that 3,000 years of human management wisdom is the best design manual for agent architectures.</sub>
-</p>
+> ### Documentation
+>
+> | Document | Description |
+> |----------|-------------|
+> | [**Whitepaper (PDF)**](paper/janus_whitepaper.pdf) | Full technical whitepaper — architecture, mechanisms, evaluation, comparison |
+> | [**Whitepaper (Chinese)**](paper/janus_whitepaper_zh.html) | 中文版白皮书 |
+> | [**Design Philosophy**](docs/design-philosophy.md) | Why human management patterns, and how they map to Janus |
+> | [**Human Management Patterns**](docs/human-management-patterns.md) | Deep dive into 6 organizational domains and their agent mappings |
+> | [**config.yaml**](config.yaml) | Configuration reference — models, depth limits, tool caps |
+>
+> ### Contributing
+>
+> Janus is in active development. Contributions are welcome!
+>
+> 1. Fork the repository
+> 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+> 3. Make your changes
+> 4. Run tests (`pytest tests/`)
+> 5. Submit a Pull Request
+>
+> *Please read [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.*
+>
+> ### License
+>
+> MIT © 2026 · [LICENSE](LICENSE) · *Built on the insight that 3,000 years of human management wisdom is the best design manual for agent architectures.*
