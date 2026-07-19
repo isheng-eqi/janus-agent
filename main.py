@@ -300,15 +300,30 @@ def main() -> None:
     while True:
         try:
             line_w = max(40, int(shutil.get_terminal_size().columns * 0.8))
-            user_input = input(
-                f"\n\n"
-                f"{_danmo(f'{gatekeeper_model}  |  {len(registry)} 工具')}\n"
-                f"{_danmo('─' * line_w)}\n"
-                f"{_jin('❯')} "
-            )
+            if console.is_quiet:
+                # Quiet mode: minimal prompt — just the ❯ marker
+                prompt = f"{_jin('❯')} "
+                # Count lines to clear later (just the ❯ line → 1 row)
+                _prompt_rows = 1
+            else:
+                prompt = (
+                    f"\n\n"
+                    f"{_danmo(f'{gatekeeper_model}  |  {len(registry)} 工具')}\n"
+                    f"{_danmo('─' * line_w)}\n"
+                    f"{_jin('❯')} "
+                )
+                # Status line + separator + ❯ line = 3 rows after the initial \n\n
+                _prompt_rows = 3
+            user_input = input(prompt)
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n{_danmo('再见')}")
             break
+
+        # ── Clear the input prompt area so history stays clean ──────────
+        # \033[<N>A = cursor up N lines, \033[J = clear from cursor to end of screen
+        # Works on Windows Terminal, Git Bash, and all modern terminals.
+        sys.stdout.write(f'\033[{_prompt_rows}A\033[J')
+        sys.stdout.flush()
 
         if user_input.lower() in ("quit", "exit", "q"):
             print(f"{_danmo('再见')}")
