@@ -21,11 +21,10 @@ from core.console import (
     _qing,
     _zhu,
     _jin,
-    _nongmo,
     _danmo,
     set_no_color,
 )
-from core._unicode import Symbols, supports_unicode
+from core._unicode import supports_unicode
 from core.gatekeeper import Gatekeeper
 from core.planner import Planner
 from core.reviewer import Reviewer
@@ -258,28 +257,32 @@ def main() -> None:
     session = Session(gk)
 
     # -- 5. REPL loop -----------------------------------------------------
-    # 太极启动画面：双面镜像 — 浓墨(JAN) + 淡墨(US) = 阴阳同体
-    # 布局：空行（阴）→ 名号框（阳）→ 副标题淡墨悬浮（阴）→ 空行（阴）→ 配置行（淡墨）
-    _diamond = '◆' if supports_unicode() else '*'
-    _box_w = 30  # 框内宽度（可视字符数）
-    # 用原始无色文本计算填充——ANSI 转义序列不计入视觉宽度
-    _pad1 = ' ' * (_box_w - len('  JAN  │  US'))
-    _pad2 = ' ' * (_box_w - len(f'       {_diamond}'))
-    _welcome_box = (
-        f'{Symbols.TOP_L}{Symbols.HLINE * _box_w}{Symbols.TOP_R}\n'
-        f'{Symbols.VLINE}  {_nongmo("JAN")}  {Symbols.VLINE}  '
-        f'{_danmo("US")}{_pad1}{Symbols.VLINE}\n'
-        f'{Symbols.VLINE}       {_diamond}{_pad2}{Symbols.VLINE}\n'
-        f'{Symbols.BOT_L}{Symbols.HLINE * _box_w}{Symbols.BOT_R}'
-    )
+    # 纯 box-drawing 大字启动画面（参考 Hermes 风格）—— 无框，6 行高
+    # 不加 ANSI 颜色，靠字符密度形成视觉冲击
+    if supports_unicode():
+        _JANUS_LOGO = '\n' + '\n'.join([
+            '  █████╗ █████╗ ███╗   ██╗██╗   ██╗███████╗',
+            '  ╚══██║██╔══██╗████╗  ██║██║   ██║██╔════╝',
+            '     ██║███████║██╔██╗ ██║██║   ██║███████╗',
+            '     ██║██╔══██║██║╚██╗██║██║   ██║╚════██║',
+            '  ██╗██║██║  ██║██║ ╚████║╚██████╔╝███████║',
+            '  ╚████╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝',
+        ])
+    else:
+        _JANUS_LOGO = '\n' + '\n'.join([
+            '    _   _   _   _   ____',
+            '   | | / \\ | \\ | | | / ___|',
+            ' _ | |/ _ \\|  \\| | | \\___ \\',
+            '| |_| / _ \\| |\\  | |_| |___) |',
+            ' \\___/  \\_/ |_| \\_|\\___|____/',
+            '                              ',
+        ])
     _WELCOME = (
-        f'\n{_welcome_box}\n'
-        f'  {_danmo("The Two-Faced Agent")}\n'
-        f'\n'
+        f'{_JANUS_LOGO}\n'
         f'{_danmo(f"{gatekeeper_model}  |  {len(registry)} 工具")}\n'
     )
     _HELP_TEXT = (
-        f'\n{_welcome_box}\n'
+        f'{_JANUS_LOGO}\n'
         f'\n'
         f'自然语言描述目标，Janus 自行拆解执行。\n'
         f'\n'
