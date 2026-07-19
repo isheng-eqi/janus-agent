@@ -78,6 +78,8 @@ class TaskResult:
     worker_id: Optional[str] = None
     sub_review_failed: bool = False  # Set when sub-worker review is exhausted
     retry_exhausted: bool = False    # L3-9: all review retries consumed
+    retry_history: list[dict] = field(default_factory=list)
+    # Structured retry log: {attempt, verdict, issue_count, highest_severity}
 
     def validate(self) -> bool:
         """Check that NEEDS_DECOMPOSITION has a valid decomposition_request.
@@ -114,6 +116,10 @@ class TaskResult:
             data["worker_id"] = self.worker_id
         if self.sub_review_failed:
             data["sub_review_failed"] = self.sub_review_failed
+        if self.retry_exhausted:
+            data["retry_exhausted"] = self.retry_exhausted
+        if self.retry_history:
+            data["retry_history"] = self.retry_history
         return data
 
     @classmethod
@@ -146,6 +152,8 @@ class TaskResult:
             confidence=Confidence(data.get("confidence", "medium")),
             worker_id=data.get("worker_id"),
             sub_review_failed=data.get("sub_review_failed", False),
+            retry_exhausted=data.get("retry_exhausted", False),
+            retry_history=data.get("retry_history", []),
         )
 
 
@@ -267,3 +275,10 @@ class ExecutionReport:
 
     has_retry_exhausted: bool = False
     """L3-9: 是否有任何子任务的重试次数已耗尽。"""
+
+    # INSPECTOR-INDEPENDENCE: Reviewer的独立发现——Planner可能未采纳的问题。
+    # Reviewer作为独立监察，其发现不应完全由Planner过滤。当Planner通过
+    # _adjust_verdict_for_criteria降级了Reviewer的裁决时，原始裁决和问题
+    # 记录在此，供Gatekeeper做独立的"监察发现"汇报。
+    # 每个dict包含: task_id, original_verdict, downgraded_to, issues, reason
+    reviewer_findings: list[dict] = field(default_factory=list)

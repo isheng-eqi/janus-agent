@@ -213,6 +213,54 @@ def _difficulty_sort_preserve_deps(specs: list[TaskSpec]) -> list[TaskSpec]:
 # ============================================================================
 
 
+# L3 shared calibration: criteria-aware verdict adjustment.
+# Extracted as a module-level function so both Planner._dispatch_with_review
+# and Worker._review_sub_result can apply the same HARD/SOFT criteria logic
+# without cross-class imports.
+def calibrate_and_adjust(
+    review: Any,
+    acceptance_criteria: str,
+) -> tuple[Any, bool, Any]:
+    """Adjust review verdict when it over-reacts to SOFT-only criteria.
+
+    Returns (adjusted_review, was_downgraded, original_verdict).
+    Mutates review.verdict in-place when a downgrade is applied.
+    """
+    from .reviewer import ReviewVerdict, Severity
+
+    _HARD_RE = re.compile(r"\[HARD\]", re.IGNORECASE)
+    _SOFT_RE = re.compile(r"\[SOFT\]", re.IGNORECASE)
+
+    has_hard = bool(_HARD_RE.search(acceptance_criteria))
+    has_soft = bool(_SOFT_RE.search(acceptance_criteria))
+
+    original_verdict = review.verdict
+    was_downgraded = False
+
+    # Case 1: all explicit criteria are SOFT
+    if has_soft and not has_hard:
+        if review.verdict == ReviewVerdict.REJECTED:
+            review.verdict = ReviewVerdict.MAJOR_REVISIONS
+            was_downgraded = True
+        elif review.verdict == ReviewVerdict.MAJOR_REVISIONS:
+            review.verdict = ReviewVerdict.MINOR_REVISIONS
+            was_downgraded = True
+
+    # Case 2: all blocking issues are MINOR but verdict is harsh
+    blocking = review.blocking_issues
+    if blocking and review.verdict in (
+        ReviewVerdict.MAJOR_REVISIONS,
+        ReviewVerdict.REJECTED,
+    ):
+        all_minor = all(i.severity == Severity.MINOR for i in blocking)
+        if all_minor:
+            review.verdict = ReviewVerdict.MINOR_REVISIONS
+            if not was_downgraded:
+                was_downgraded = (review.verdict != original_verdict)
+
+    return (review, was_downgraded, original_verdict)
+
+
 class Planner:
     """战术执行层——把战略意图拆成执行计划，分派、追踪、汇总。
 
@@ -1000,56 +1048,9 @@ right granularity so each sub-task can be executed independently by a Worker."""
     ) -> ReviewResult:
         """Demote the review verdict when it over-reacts to SOFT-only criteria.
 
-        Rules:
-        - If acceptance_criteria has explicit [SOFT] markers AND no explicit
-          [HARD] markers (all explicit criteria are SOFT, implicit ones
-          default to HARD — but this is a soft task) → demote REJECTED
-          to MAJOR_REVISIONS, and MAJOR_REVISIONS to MINOR_REVISIONS.
-        - If all blocking issues are MINOR severity → demote MAJOR_REVISIONS
-          to MINOR_REVISIONS (the Reviewer was too harsh).
-        - Otherwise leave the verdict unchanged.
-
-        This is a safety net — the Reviewer LLM should already produce the
-        right verdict based on the CRITERIA CLASSIFICATION in its prompt.
+        Delegates to the shared module-level ``calibrate_and_adjust``.
         """
-        has_hard, has_soft = Planner._analyze_criteria_labels(
-            acceptance_criteria
-        )
-
-        # Case 1: Task has explicit SOFT criteria and NO explicit HARD criteria.
-        # All explicit criteria are SOFT — the task is guidance-oriented.
-        if has_soft and not has_hard:
-            if review.verdict == ReviewVerdict.REJECTED:
-                logger.info(
-                    "Demoting verdict REJECTED → MAJOR_REVISIONS "
-                    "(SOFT-only criteria task)."
-                )
-                review.verdict = ReviewVerdict.MAJOR_REVISIONS
-            elif review.verdict == ReviewVerdict.MAJOR_REVISIONS:
-                logger.info(
-                    "Demoting verdict MAJOR_REVISIONS → MINOR_REVISIONS "
-                    "(SOFT-only criteria task)."
-                )
-                review.verdict = ReviewVerdict.MINOR_REVISIONS
-
-        # Case 2: All blocking issues are MINOR severity but verdict
-        # is MAJOR_REVISIONS or REJECTED — the Reviewer was too harsh.
-        blocking = review.blocking_issues
-        if blocking and review.verdict in (
-            ReviewVerdict.MAJOR_REVISIONS,
-            ReviewVerdict.REJECTED,
-        ):
-            all_minor = all(
-                i.severity == Severity.MINOR for i in blocking
-            )
-            if all_minor:
-                logger.info(
-                    "Demoting verdict %s → MINOR_REVISIONS "
-                    "(all blocking issues are MINOR severity).",
-                    review.verdict.value,
-                )
-                review.verdict = ReviewVerdict.MINOR_REVISIONS
-
+        calibrate_and_adjust(review, acceptance_criteria)
         return review
 
     # FEEDFORWARD-LOOP: 从Reviewer问题中提取分解策略反馈

@@ -26,6 +26,7 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 from .protocol import Confidence, TaskResult, TaskSpec, TaskStatus
 from .prompts import extract_json
 from .tool_log import log_tool_call  # L3-2
+from .planner import calibrate_and_adjust, Planner  # L3 shared calibration + feedback extraction
 
 if TYPE_CHECKING:
     from .console import Console
@@ -379,6 +380,67 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
             resume_context = (
                 f"--- SUB-TASK ARTIFACTS (files/resources created) ---\n"
                 f"{chr(10).join(all_artifacts)}\n\n"
+                f"{resume_context}"
+            )
+
+        # --- aggregate sub-worker tool logs for audit transparency ----------
+        tool_log_summaries: list[str] = []
+        for sub_st in result.decomposition_request.sub_tasks:
+            sub_task_id = f"{spec.task_id}.{sub_st.id}"
+            log_dir = os.path.join(os.path.dirname(__file__), "..", "tool_logs")
+            log_path = os.path.join(log_dir, f"{sub_task_id}.jsonl")
+            if os.path.isfile(log_path):
+                try:
+                    with open(log_path, "r", encoding="utf-8") as lf:
+                        lines = lf.readlines()
+                    call_count = len(lines)
+                    tool_types: set[str] = set()
+                    for line in lines:
+                        try:
+                            entry = json.loads(line)
+                            tool_types.add(entry.get("tool_name", "?"))
+                        except json.JSONDecodeError:
+                            pass
+                    tool_log_summaries.append(
+                        f"  - [{sub_task_id}] {call_count} tool calls "
+                        f"({', '.join(sorted(tool_types))})"
+                    )
+                except Exception:
+                    pass
+        if tool_log_summaries:
+            resume_context = (
+                f"--- [SUB-WORKER TOOL LOGS] ---\n"
+                f"{chr(10).join(tool_log_summaries)}\n\n"
+                f"{resume_context}"
+            )
+
+        # --- extract decomposition feedback from sub-review failures --------
+        # FEEDFORWARD-LOOP: detect patterns indicating task decomposition
+        # or acceptance-criteria issues, not just Worker execution quality.
+        _FEEDBACK_KEYWORDS = [
+            "acceptance criteria", "too vague", "too broad", "unclear",
+            "ambiguous", "task decomposition", "poorly defined",
+            "not specific enough", "scope too large", "criterion",
+            "impossible to verify", "unmeasurable",
+            "验收标准", "太模糊", "太宽泛", "不明确", "不清晰",
+            "任务分解", "分解粒度", "不够具体", "范围太大",
+            "无法验证", "不可衡量", "定义不清",
+        ]
+        decomp_feedback: list[str] = []
+        for i, sr in enumerate(sub_results):
+            if sr.sub_review_failed or "[SUB-WORKER REVIEW FAILED" in sr.result:
+                for kw in _FEEDBACK_KEYWORDS:
+                    if kw.lower() in sr.result.lower():
+                        decomp_feedback.append(
+                            f"  - 子任务 {i + 1}: 审查问题指向任务分解/验收标准 — "
+                            f"关键词: {kw}"
+                        )
+                        break
+        if decomp_feedback:
+            resume_context = (
+                f"⚠️ 前馈闭环：子任务审查发现以下可能源于任务分解的问题，"
+                f"请据此调整策略：\n"
+                f"{chr(10).join(decomp_feedback)}\n\n"
                 f"{resume_context}"
             )
 
@@ -754,6 +816,9 @@ If your context contains "REVIEW FEEDBACK", you are retrying a failed task.
         for attempt in range(issue_count):
             review = self._reviewer.review(spec, result)
             last_review = review
+
+            # Apply shared HARD/SOFT criteria calibration (same as Planner)
+            calibrate_and_adjust(review, spec.acceptance_criteria)
 
             # ── APPROVED / APPROVED_WITH_NOTES → accept ──────────────
             if review.verdict in (

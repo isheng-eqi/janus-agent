@@ -674,6 +674,24 @@ Output ONLY valid JSON."""
                 f"  - {d}" for d in report.details if "失败" in d or "未通过" in d or "未完成" in d
             )
 
+        # Inject structured failure data from failed_tasks so the LLM
+        # gets acceptance_criteria and review_issues — not just text summaries.
+        if report.failed_tasks:
+            structured_lines: list[str] = []
+            for ft in report.failed_tasks:
+                parts = [f"  - {ft.get('task_id', '?')}: {ft.get('summary', '')}"]
+                if ft.get("acceptance_criteria"):
+                    parts.append(f"    验收标准: {ft['acceptance_criteria']}")
+                if ft.get("review_issues"):
+                    parts.append(f"    审查问题: {ft['review_issues']}")
+                structured_lines.append("\n".join(parts))
+            if structured_lines:
+                failure_text = (
+                    failure_text
+                    + "\n\n[结构化失败数据 — 供策略调整参考]\n"
+                    + "\n\n".join(structured_lines)
+                )
+
         # Build success context — what already worked, so don't redo it
         success_details = [d for d in report.details if "✓" in d or "完成" in d or "通过" in d]
         success_text = (
