@@ -424,7 +424,7 @@ Output ONLY valid JSON."""
                     f"原因：{planner_error}"
                 )
 
-        return self._report_to_user(report)
+        return self._report_to_user(report, user_goal=goal)
 
     def _formulate_directive(self, goal: str, history_context: str = "", user_goal: str = "") -> Directive:
         """Translate a user goal into a strategic Directive.
@@ -900,6 +900,14 @@ Output ONLY valid JSON."""
         _new_unique = [f for f in new.reviewer_findings if f.get("task_id") not in _old_ids]
         _merged_findings = list(old.reviewer_findings) + _new_unique
 
+        # 合并 failed_tasks (按task_id去重，优先保留old)
+        _old_failed_ids = {ft.get("task_id") for ft in old.failed_tasks}
+        _new_failed_unique = [
+            ft for ft in new.failed_tasks
+            if ft.get("task_id") not in _old_failed_ids
+        ]
+        _merged_failed_tasks = list(old.failed_tasks) + _new_failed_unique
+
         return ExecutionReport(
             status=status,
             total_tasks=total_tasks,
@@ -908,6 +916,7 @@ Output ONLY valid JSON."""
             summary=merged_summary,
             details=merged_details,
             failed_details=merged_failed_details,
+            failed_tasks=_merged_failed_tasks,
             goal=old.goal or new.goal,
             constraints=old.constraints or new.constraints,
             has_retry_exhausted=old.has_retry_exhausted or new.has_retry_exhausted,  # L3-9
@@ -986,10 +995,150 @@ Output ONLY valid JSON."""
         )
         return {"valid": True, "reason": ""}
 
-    def _report_to_user(self, report: ExecutionReport) -> str:
+    # -- internal: LLM-driven final summary ----------------------------------
+
+    def _generate_final_summary(
+        self, report: ExecutionReport, user_goal: str,
+    ) -> Optional[str]:
+        """Use LLM to generate a human-readable final summary of execution results.
+
+        Replaces the mechanical stat report with a natural-language summary
+        covering four aspects:
+
+        1. **全局概览** — one-sentence big-picture summary.
+        2. **成功产出** — key deliverables (file paths, what was done).
+        3. **失败分析** — root causes: Worker capability gap vs vague requirements.
+        4. **后续建议** — actionable next steps for the user.
+
+        Args:
+            report: The Planner's execution report.
+            user_goal: The user's original pristine goal (一字不改).
+
+        Returns:
+            A Chinese natural-language summary string, or ``None`` if the
+            LLM call fails (triggering the mechanical-report fallback).
+        """
+        # ── Build success context ──────────────────────────────────────────
+        failure_set: set[str] = (
+            set(report.failed_details) if report.failed_details else set()
+        )
+        success_details: list[str] = []
+        for d in report.details:
+            if d in failure_set:
+                continue
+            # Clean up worker-N prefix for readability
+            cleaned = re.sub(r'^\s*(worker-\d+|\[[^\]]+\])\s*[:,\s]*', '', d)
+            stripped = cleaned.strip()
+            if stripped and not (
+                stripped.startswith("── ") and stripped.endswith(" ──")
+            ):
+                success_details.append(stripped)
+
+        # ── Build failure context ──────────────────────────────────────────
+        failure_lines: list[str] = []
+        if report.failed_tasks:
+            for ft in report.failed_tasks:
+                parts = [
+                    f"- 任务 {ft.get('task_id', '?')}: {ft.get('summary', '')}",
+                ]
+                if ft.get("acceptance_criteria"):
+                    parts.append(f"  验收标准: {ft['acceptance_criteria']}")
+                if ft.get("review_issues"):
+                    parts.append(f"  审查问题: {ft['review_issues']}")
+                failure_lines.append("\n".join(parts))
+        failure_text = (
+            "\n".join(failure_lines) if failure_lines
+            else "(无详细失败信息)"
+        )
+
+        # ── Build success deliverable text (cap at 15 for token budget) ───
+        max_show = 15
+        if success_details:
+            shown = success_details[-max_show:]
+            success_text = "\n".join(f"  - {d}" for d in shown)
+            if len(success_details) > max_show:
+                success_text = (
+                    f"(仅展示最近 {max_show} 项，共 {len(success_details)} 项成功产出)\n"
+                    f"{success_text}"
+                )
+        else:
+            success_text = "(无成功产出)"
+
+        # ── One-shot LLM call ──────────────────────────────────────────────
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "system",
+                "content": (
+                    "你是 Janus 的最终汇报者。用户给了你任务目标，你分析了执行结果，"
+                    "现在向用户汇报。\n"
+                    "用中文自然语言输出，简洁专业但不生硬。"
+                    "像一个有经验的助理在向老板做口头汇报。\n"
+                    "不要用 JSON，直接输出纯文本。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"## 用户原始目标\n{user_goal}\n\n"
+                    f"## 执行统计\n"
+                    f"- 总任务数: {report.total_tasks}\n"
+                    f"- 成功: {report.passed}\n"
+                    f"- 失败: {report.failed}\n"
+                    f"- 整体状态: {report.status}\n\n"
+                    f"## 成功产出\n{success_text}\n\n"
+                    f"## 失败任务详情\n{failure_text}\n\n"
+                    "请生成汇报文本，包含以下四部分（每部分用空行分隔）：\n\n"
+                    "**1. 全局概览** — 一句话说清楚整体情况"
+                    "（成功了什么、失败了什么）\n\n"
+                    "**2. 成功产出** — 列出关键产出物，每项一行。"
+                    "如果有文件路径，列出来。不要啰嗦。\n\n"
+                    "**3. 失败分析** — 为什么会失败？"
+                    "是 Worker 执行问题（工具限制、能力不足），"
+                    "还是需求太模糊/太大？分析根因。\n\n"
+                    "**4. 后续建议** — 用户下一步可以怎么调整："
+                    "改需求描述、拆分任务、换个角度、还是调整参数？"
+                    "给出具体可行的建议。\n\n"
+                    "输出要求：纯文本，直接输出汇报内容，不要加前缀说明。"
+                ),
+            },
+        ]
+
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+            )
+        except Exception as exc:
+            logger.exception("Final summary generation API call failed.")
+            return None
+
+        if not response.choices:
+            logger.warning(
+                "Final summary generation returned empty choices."
+            )
+            return None
+
+        choice = response.choices[0]
+        content = choice.message.content
+        if not content or not content.strip():
+            logger.warning(
+                "Final summary generation returned empty content."
+            )
+            return None
+
+        return content.strip()
+
+    def _report_to_user(
+        self, report: ExecutionReport, user_goal: str = "",
+    ) -> str:
         """Format an ExecutionReport into a user-facing string.
 
-        Taiji aesthetics:
+        Strategy: first attempt LLM-driven natural-language summarization
+        (see :meth:`_generate_final_summary`).  If the LLM call fails or no
+        *user_goal* is provided, fall back to the mechanical stat report
+        below so the user always sees something.
+
+        Taiji aesthetics apply to the fallback path:
         - 全部完成 → 金「完成」
         - 全部未完成 → 朱「未完成」
         - 部分完成 → 青「部分完成」
@@ -1002,6 +1151,63 @@ Output ONLY valid JSON."""
         Returns:
             A user-friendly summary string.
         """
+        # ── LLM-driven final summary (primary path) ─────────────────────────
+        if user_goal and report.total_tasks > 0:
+            llm_summary = self._generate_final_summary(report, user_goal)
+            if llm_summary:
+                # LLM summary succeeded — build the enhanced report
+                lines: list[str] = []
+                lines.append(_jin("── Janus 执行总结 ──"))
+                lines.append("")
+                lines.append(llm_summary)
+
+                # Append failure details below a separator for debugging
+                if report.failed_details:
+                    lines.append("")
+                    lines.append(
+                        _nongmo("── 失败详情（供调试参考）──"),
+                    )
+                    for i, fd in enumerate(report.failed_details, 1):
+                        cleaned = re.sub(
+                            r'^\s*(worker-\d+|\[[^\]]+\])\s*[:,\s]*',
+                            '', fd,
+                        )
+                        lines.append(f"  {i}. {cleaned.strip()}")
+
+                # INSPECTOR-INDEPENDENCE: Reviewer findings
+                if report.reviewer_findings:
+                    lines.append("")
+                    lines.append(
+                        f"{_danmo('── 独立监察发现 ──')}",
+                    )
+                    lines.append(
+                        "以下问题由 Reviewer 独立发现，"
+                        "但 Planner 在裁决调整中降级了严重程度。"
+                    )
+                    lines.append(
+                        "请关注这些可能需要进一步检查的项：\n"
+                    )
+                    for i, finding in enumerate(
+                        report.reviewer_findings, 1,
+                    ):
+                        task_id = finding.get("task_id", "?")
+                        orig = finding.get("original_verdict", "?")
+                        downgraded = finding.get("downgraded_to", "?")
+                        issues = finding.get("issues", [])
+                        lines.append(
+                            f"  {i}. 任务 {task_id}: "
+                            f"Reviewer 判 {_zhu(orig)} → "
+                            f"Planner 降级为 {_qing(downgraded)}",
+                        )
+                        for issue in issues[:3]:
+                            lines.append(
+                                f"     [{issue.get('severity', '?')}] "
+                                f"{issue.get('description', '')}",
+                            )
+
+                return "\n".join(lines)
+
+        # ── Fallback: mechanical stat report ───────────────────────────────
         if report.total_tasks == 0:
             return (
                 f"任务未能执行。\n"

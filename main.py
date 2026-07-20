@@ -274,9 +274,7 @@ def main() -> None:
         f"{_danmo(f'{gatekeeper_model}  |  {len(registry)} 工具')}\n"
     )
     _HELP_TEXT = (
-        f"\n{_JANUS_LOGO}\n"
-        f"\n"
-        f"自然语言描述目标，Janus 自行拆解执行。\n"
+        f"\n自然语言描述目标，Janus 自行拆解执行。\n"
         f"\n"
         f"  > 帮我写一个排序 CSV 的 Python 脚本\n"
         f"  > 在 ./my-app 下创建 README.md\n"
